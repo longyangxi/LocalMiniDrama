@@ -232,6 +232,62 @@ function normalizeAspectRatioForApi(raw) {
   return KLING_OMNI_ASPECT_RATIOS.has(s) ? s : null;
 }
 
+/** 万相 2.6 官方 size 必须是宽*高，不能传 9:16 / 720P。未传时 r2v 默认 1920*1080（横屏）。 */
+const DASHSCOPE_WAN_SIZE_720P = {
+  '16:9': '1280*720',
+  '9:16': '720*1280',
+  '1:1': '960*960',
+  '4:3': '1088*832',
+  '3:4': '832*1088',
+};
+const DASHSCOPE_WAN_SIZE_1080P = {
+  '16:9': '1920*1080',
+  '9:16': '1080*1920',
+  '1:1': '1440*1440',
+  '4:3': '1632*1248',
+  '3:4': '1248*1632',
+};
+
+function dashScopeWanRatioBucket(aspectRatio) {
+  const n = normalizeAspectRatioForApi(aspectRatio);
+  if (n === '2:3') return '3:4';
+  if (n === '3:2') return '4:3';
+  if (n && DASHSCOPE_WAN_SIZE_720P[n]) return n;
+  const raw = String(aspectRatio || '').trim();
+  if (DASHSCOPE_WAN_SIZE_720P[raw]) return raw;
+  return '16:9';
+}
+
+function dashScopeWanUse1080p(resolution) {
+  const s = String(resolution || '').trim().toLowerCase();
+  return s === '1080p' || s === '1080' || s === '1k';
+}
+
+/**
+ * 万相 2.6 t2v / r2v / vace 的 parameters.size（宽*高）。
+ * 默认 720P；仅当用户选 1080p 时升到 1080P 档。
+ */
+function dashScopeWanVideoSize(aspectRatio, resolution) {
+  const ratio = dashScopeWanRatioBucket(aspectRatio);
+  const table = dashScopeWanUse1080p(resolution) ? DASHSCOPE_WAN_SIZE_1080P : DASHSCOPE_WAN_SIZE_720P;
+  return table[ratio] || table['16:9'];
+}
+
+/** 万相 i2v / kf2v 的 parameters.resolution 档位（画幅跟参考图走） */
+function dashScopeWanResolutionTier(resolution, { allow480 } = {}) {
+  const s = String(resolution || '').trim().toUpperCase().replace(/\s/g, '');
+  if (allow480 && (s === '480P' || s === '480')) return '480P';
+  if (s === '1080P' || s === '1080' || s === '1K') return '1080P';
+  return '720P';
+}
+
+/** 首尾不是同一张图才走 kf2v；否则首尾相同会插成近乎静止的 5 秒 */
+function dashScopeHasDistinctLastFrame(firstRaw, lastRaw) {
+  const first = String(firstRaw || '').trim();
+  const last = String(lastRaw || '').trim();
+  return !!(first && last && last !== first);
+}
+
 function resolveKlingOmniAspectRatio(aspect_ratio, log, video_gen_id) {
   const normalized = normalizeAspectRatioForApi(aspect_ratio);
   if (normalized) return normalized;
@@ -1507,11 +1563,12 @@ const DASHSCOPE_IMAGE2VIDEO = '/api/v1/services/aigc/image2video/video-synthesis
 
 /**
  * ???????????? endpoint ????????? /api/v1/tasks/{taskId}
- * - wan2.2-kf2v-flash: image2video, first_frame_url + last_frame_url
- * - wan2.6-t2v: video-generation, ? prompt??????
- * - wan2.6-i2v-flash: video-generation, prompt + img_url????????
- * - wanx2.1-vace-plus: video-generation, function image_reference + ref_images_url??? 3 ??
- * - wan2.6-r2v-flash: video-generation, reference_urls??? 5 ??
+ * - wan2.2-kf2v-flash: image2video, first_frame_url + last_frame_url（须两张不同图；无尾帧则降级 wan2.2-i2v-flash）
+ * - wan2.2-i2v-flash: video-generation, prompt + img_url 单图生视频
+ * - wan2.6-t2v: video-generation, 文生视频
+ * - wan2.6-i2v-flash: video-generation, prompt + img_url
+ * - wanx2.1-vace-plus: video-generation, function image_reference + ref_images_url 最多 3 张
+ * - wan2.6-r2v-flash: video-generation, reference_urls 最多 5 张
  */
 async function callDashScopeVideoApi(config, log, opts) {
   const {
@@ -1522,12 +1579,15 @@ async function callDashScopeVideoApi(config, log, opts) {
     last_frame_url,
     reference_urls,
     duration,
+    aspect_ratio,
+    resolution,
     files_base_url,
     storage_local_path,
     video_gen_id,
   } = opts;
+  const wanSize = dashScopeWanVideoSize(aspect_ratio, resolution);
   const base = (config.base_url || '').replace(/\/$/, '');
-  const model = modelName || 'wan2.2-kf2v-flash';
+  const model = String(modelName || 'wan2.2-kf2v-flash').trim();
   const dur = duration ? Number(duration) : 10;
   const baseUrl = (files_base_url || '').replace(/\/$/, '');
   const isLocalhost = baseUrl && /localhost|127\.0\.0\.1/i.test(baseUrl);
@@ -1568,47 +1628,71 @@ async function callDashScopeVideoApi(config, log, opts) {
 
   let url;
   let body;
+  const refList = Array.isArray(reference_urls) ? reference_urls.map((u) => String(u || '').trim()).filter(Boolean) : [];
 
-  if (model === 'wan2.2-kf2v-flash') {
-    url = base + DASHSCOPE_IMAGE2VIDEO;
-    const firstRaw = (first_frame_url && first_frame_url.trim()) || (image_url && image_url.trim());
-    const lastRaw = (last_frame_url && last_frame_url.trim()) || firstRaw;
+  if (model === 'wan2.2-kf2v-flash' || model === 'wan2.2-i2v-flash') {
+    const firstRaw = (first_frame_url && first_frame_url.trim()) || (image_url && image_url.trim()) || refList[0] || '';
+    const lastRaw = (last_frame_url && last_frame_url.trim()) || refList[1] || '';
     const firstUrl = toImageInput(firstRaw);
-    const lastUrl = toImageInput(lastRaw);
-    if (!firstUrl || !lastUrl) {
-      return { error: 'wan2.2-kf2v-flash ?????????' };
+    if (!firstUrl) {
+      log.warn('[DashScope 2.2] 缺少参考图', {
+        video_gen_id,
+        model,
+        has_first_frame_url: !!(first_frame_url && String(first_frame_url).trim()),
+        has_image_url: !!(image_url && String(image_url).trim()),
+        ref_count: refList.length,
+      });
+      return { error: model + ' 需要分镜图作为参考（请先生成或上传分镜图片）' };
     }
-    body = {
-      model,
-      input: { prompt: prompt || '', first_frame_url: firstUrl, last_frame_url: lastUrl },
-      parameters: { resolution: '480P', prompt_extend: true },
-    };
+    const useKf2v = model === 'wan2.2-kf2v-flash' && dashScopeHasDistinctLastFrame(firstRaw, lastRaw);
+    if (useKf2v) {
+      const lastUrl = toImageInput(lastRaw);
+      if (!lastUrl) {
+        return { error: 'wan2.2-kf2v-flash 尾帧无法读取，请重新生成或上传尾帧图' };
+      }
+      url = base + DASHSCOPE_IMAGE2VIDEO;
+      body = {
+        model: 'wan2.2-kf2v-flash',
+        input: { prompt: prompt || '', first_frame_url: firstUrl, last_frame_url: lastUrl },
+        parameters: { resolution: dashScopeWanResolutionTier(resolution, { allow480: true }), prompt_extend: true },
+      };
+    } else {
+      if (model === 'wan2.2-kf2v-flash') {
+        log.info('[DashScope kf2v] 无独立尾帧，改走 wan2.2-i2v-flash 单图生视频', { video_gen_id });
+      }
+      url = base + DASHSCOPE_VIDEO_GENERATION;
+      body = {
+        model: 'wan2.2-i2v-flash',
+        input: { prompt: prompt || '', img_url: firstUrl },
+        parameters: { resolution: dashScopeWanResolutionTier(resolution, { allow480: true }), prompt_extend: true },
+      };
+    }
   } else if (model === 'wan2.6-t2v') {
     url = base + DASHSCOPE_VIDEO_GENERATION;
     body = {
       model,
       input: { prompt: prompt || '' },
-      parameters: { size: '1280*720', prompt_extend: true, duration: dur, shot_type: 'multi' },
+      parameters: { size: wanSize, prompt_extend: true, duration: dur, shot_type: 'multi' },
     };
   } else if (model === 'wan2.6-i2v-flash') {
     url = base + DASHSCOPE_VIDEO_GENERATION;
-    const imgRaw = (image_url && image_url.trim()) || (first_frame_url && first_frame_url.trim());
+    const imgRaw = (image_url && image_url.trim()) || (first_frame_url && first_frame_url.trim()) || refList[0] || '';
     const imgUrl = toImageInput(imgRaw);
-    if (!imgUrl) return { error: 'wan2.6-i2v-flash ??????' };
+    if (!imgUrl) return { error: 'wan2.6-i2v-flash 需要一张参考图（请先生成或上传分镜图片）' };
     body = {
       model,
       input: { prompt: prompt || '', img_url: imgUrl },
-      parameters: { resolution: '720P', prompt_extend: true, duration: dur, shot_type: 'multi' },
+      parameters: { resolution: dashScopeWanResolutionTier(resolution), prompt_extend: true, duration: dur, shot_type: 'multi' },
     };
   } else if (model === 'wanx2.1-vace-plus') {
     url = base + DASHSCOPE_VIDEO_GENERATION;
     const rawRefs = Array.isArray(reference_urls) ? reference_urls.filter(Boolean).slice(0, 3) : [];
     const refs = rawRefs.map(toImageInput).filter(Boolean);
-    if (refs.length === 0) return { error: 'wanx2.1-vace-plus ???????? 3 ??' };
+    if (refs.length === 0) return { error: 'wanx2.1-vace-plus 需要至少 1 张参考图（最多 3 张）' };
     body = {
       model,
       input: { function: 'image_reference', prompt: prompt || '', ref_images_url: refs },
-      parameters: { prompt_extend: true, obj_or_bg: ['obj', 'bg'], size: '1280*720' },
+      parameters: { prompt_extend: true, obj_or_bg: ['obj', 'bg'], size: wanSize },
     };
   } else if (model === 'wan2.6-r2v-flash') {
     url = base + DASHSCOPE_VIDEO_GENERATION;
@@ -1628,7 +1712,7 @@ async function callDashScopeVideoApi(config, log, opts) {
     body = {
       model,
       input: { prompt: prompt || '', reference_urls: refs },
-      parameters: { prompt_extend: true, duration: r2vDur, shot_type: 'multi' },
+      parameters: { size: wanSize, prompt_extend: true, duration: r2vDur, shot_type: 'multi' },
     };
   } else {
     return { error: '不支持的通义万相视频模型: ' + model };
@@ -1649,6 +1733,9 @@ async function callDashScopeVideoApi(config, log, opts) {
     video_gen_id,
     files_base_url: baseUrl || '(empty)',
     duration: body.parameters?.duration,
+    size: body.parameters?.size || null,
+    resolution: body.parameters?.resolution || null,
+    aspect_ratio: aspect_ratio || '(empty)',
     image_urls: imageUrlsInBody,
   });
   log.info('Video API request (DashScope)', {
@@ -1656,6 +1743,7 @@ async function callDashScopeVideoApi(config, log, opts) {
     model,
     video_gen_id,
     duration: body.parameters?.duration,
+    size: body.parameters?.size || null,
   });
   const res = await fetch(url, {
     method: 'POST',
@@ -1668,7 +1756,7 @@ async function callDashScopeVideoApi(config, log, opts) {
   });
   const raw = await res.text();
   if (!res.ok) {
-    let errMsg = '????????: ' + res.status;
+    let errMsg = 'DashScope 请求失败: ' + res.status;
     try {
       const errJson = JSON.parse(raw);
       if (errJson.message) errMsg += ' - ' + errJson.message;
@@ -1683,16 +1771,16 @@ async function callDashScopeVideoApi(config, log, opts) {
   try {
     data = JSON.parse(raw);
   } catch (e) {
-    return { error: '??????????' };
+    return { error: 'DashScope 响应非 JSON' };
   }
   if (data.code) {
-    return { error: data.message || data.code || '????????' };
+    return { error: data.message || data.code || 'DashScope 返回错误' };
   }
   const taskId = data?.output?.task_id;
   if (taskId) return { task_id: taskId, status: 'PENDING' };
   const videoUrl = parseDashScopeVideoUrl(data);
   if (videoUrl) return { video_url: videoUrl };
-  return { error: '??? task_id ? video_url' };
+  return { error: '未返回 task_id 或 video_url' };
 }
 
 /**
@@ -3803,6 +3891,8 @@ async function callVideoApi(db, log, opts) {
       last_frame_url: opts.last_frame_url,
       reference_urls: opts.reference_urls,
       duration: opts.duration,
+      aspect_ratio,
+      resolution: opts.resolution,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
@@ -4041,14 +4131,21 @@ async function callVideoApi(db, log, opts) {
     has_last_frame: !!lastForApi,
     frame_count: (firstForApi ? 1 : 0) + (lastForApi ? 1 : 0),
   });
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + (config.api_key || ''),
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + (config.api_key || ''),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    const cause = e.cause?.code || e.cause?.message || e.message || 'fetch failed';
+    log.error('Video API fetch failed', { video_gen_id, url, error: e.message, cause });
+    return { error: '无法连接视频接口 ' + url + ' (' + cause + ')' };
+  }
   const raw = await res.text();
   log.info('Video API raw response', { video_gen_id, status: res.status, raw: raw.slice(0, 1000) });
   if (!res.ok) {
@@ -4472,9 +4569,13 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
 
 module.exports = {
   getDefaultVideoConfig,
+  resolveVideoProtocol,
   callVideoApi,
   pollVideoTask,
   normalizeAspectRatioForApi,
+  dashScopeWanVideoSize,
+  dashScopeWanResolutionTier,
+  dashScopeHasDistinctLastFrame,
   isPlausibleHttpVideoUrl,
   pickProxyVideoUrl,
   extractAgnesVideoUrl,

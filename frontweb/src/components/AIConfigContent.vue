@@ -1335,7 +1335,7 @@ const providerConfigs = {
     { id: 'minimax_h3', name: 'MiniMax H3', models: ['MiniMax-H3'] },
     { id: 'minimax', name: 'MiniMax 海螺', models: ['MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-2.3-Fast', 'MiniMax-Hailuo-02'] },
     { id: 'gemini', name: 'Google Gemini (Veo)', models: ['veo-3.1-generate-preview', 'veo-3.0-generate-preview', 'veo-3.0-fast-generate-preview'] },
-    { id: 'dashscope', name: '通义万相', models: ['wan2.6-r2v-flash', 'wan2.6-t2v', 'wan2.2-kf2v-flash', 'wan2.6-i2v-flash', 'wanx2.1-vace-plus'] },
+    { id: 'dashscope', name: '通义万相', models: ['wan2.2-i2v-flash', 'wan2.2-kf2v-flash', 'wan2.6-r2v-flash', 'wan2.6-t2v', 'wan2.6-i2v-flash', 'wanx2.1-vace-plus'] },
     {
       id: 'jimeng_ai_api',
       name: 'Jimeng AI API（自建即梦免费 API）',
@@ -1683,7 +1683,7 @@ const TONGYI_CONFIGS = [
   { service_type: 'image', name: '通义万象 文本生图', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
   { service_type: 'image', name: '通义千问 文本生图', base_url: 'https://dashscope.aliyuncs.com', provider: 'qwen_image', model: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] },
   { service_type: 'storyboard_image', name: '通义万象 分镜图', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
-  { service_type: 'video', name: '通义万相', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.2-kf2v-flash'] }
+  { service_type: 'video', name: '通义万相', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.2-i2v-flash'] }
 ]
 
 /** 火山引擎一键配置用 */

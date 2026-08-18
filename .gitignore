@@ -25,3 +25,5 @@ frontweb-edu
 .superpowers
 build_edu
 node_modules
+.mcp.json
+.claude/settings.local.json

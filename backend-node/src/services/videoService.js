@@ -499,8 +499,12 @@ async function processVideoGeneration(db, log, videoGenId) {
       } catch (_) {}
     }
     const rowForAspect = { ...row, aspect_ratio: aspectForVideo || row.aspect_ratio };
-    const hasOmniRefs = !!(reference_urls && reference_urls.length > 0);
-    if (row.task_id && hasOmniRefs) {
+    const protocol = videoClient.resolveVideoProtocol(config, row.model);
+    // 仅 Seedance Omni 把 reference_urls 当主输入；此时才去掉经典首尾帧，避免重复塞图。
+    // 万相 kf2v / 可灵 / Vidu 等仍读 first_frame_url / image_url。前端在传统模式也会带上
+    // reference_image_urls（分镜主图副本），绝不能因此把首帧清掉，否则 wan2.2-kf2v-flash 会报缺图。
+    const omniRefsOnly = protocol === 'volcengine_omni' && !!(reference_urls && reference_urls.length > 0);
+    if (row.task_id && reference_urls && reference_urls.length > 0) {
       taskService.updateTaskStatus(
         db,
         row.task_id,
@@ -521,9 +525,9 @@ async function processVideoGeneration(db, log, videoGenId) {
       provider: row.provider,
       drama_id: row.drama_id,
       storyboard_id: row.storyboard_id || undefined,
-      image_url: hasOmniRefs ? undefined : row.image_url,
-      first_frame_url: hasOmniRefs ? undefined : row.first_frame_url,
-      last_frame_url: hasOmniRefs ? undefined : row.last_frame_url,
+      image_url: omniRefsOnly ? undefined : row.image_url,
+      first_frame_url: omniRefsOnly ? undefined : row.first_frame_url,
+      last_frame_url: omniRefsOnly ? undefined : row.last_frame_url,
       reference_urls,
       files_base_url: filesBaseUrl,
       storage_local_path: storageLocalPath,
