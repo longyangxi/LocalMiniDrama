@@ -373,6 +373,16 @@
             <el-option label="12秒/段" :value="12" />
             <el-option label="15秒/段" :value="15" />
           </el-select>
+          <el-select
+            v-model="videoResolution"
+            style="width: 118px"
+            title="分镜视频清晰度，生成前设置"
+            @change="() => saveProjectSettings(false)"
+          >
+            <el-option label="480p 视频" value="480p" />
+            <el-option label="720p 视频" value="720p" />
+            <el-option label="1080p 视频" value="1080p" />
+          </el-select>
           <el-select v-model="scriptLanguage" placeholder="分镜语言" clearable style="width: 105px">
             <el-option label="中文" value="zh" />
             <el-option label="英文" value="en" />
@@ -887,6 +897,17 @@
           </div>
           <template v-if="storyboards.length > 0">
             <div class="sb-batch-right">
+              <el-select
+                v-model="videoResolution"
+                size="large"
+                style="width: 118px"
+                title="分镜视频清晰度，生成前设置"
+                @change="() => saveProjectSettings(false)"
+              >
+                <el-option label="480p 视频" value="480p" />
+                <el-option label="720p 视频" value="720p" />
+                <el-option label="1080p 视频" value="1080p" />
+              </el-select>
               <el-button
                 type="success"
                 plain
@@ -1579,13 +1600,6 @@
       <section class="section card">
         <h2 class="section-title">视频配置</h2>
         <div class="config-grid">
-          <el-form-item label="分辨率">
-            <el-select v-model="videoResolution" style="width: 160px">
-              <el-option label="480p" value="480p" />
-              <el-option label="720p" value="720p" />
-              <el-option label="1080p" value="1080p" />
-            </el-select>
-          </el-form-item>
           <!--
           <el-form-item label="配乐">
             <el-select v-model="videoMusic" placeholder="无" clearable style="width: 160px">
@@ -4602,6 +4616,10 @@ async function loadDrama() {
     }
     projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
     videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
+    {
+      const rawRes = String(d.metadata?.video_resolution || '').toLowerCase()
+      videoResolution.value = ['480p', '720p', '1080p'].includes(rawRes) ? rawRes : (videoResolution.value || '480p')
+    }
     storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
     storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
     storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
@@ -5003,6 +5021,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
     video_clip_duration: videoClipDuration.value || 5,
+    video_resolution: videoResolution.value || '480p',
     storyboard_include_narration: !!storyboardIncludeNarration.value,
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
     storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
