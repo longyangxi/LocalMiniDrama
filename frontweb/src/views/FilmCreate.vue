@@ -839,6 +839,13 @@
           <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
             生成分镜时生成解说旁白（narration，与对白分开，便于后期 TTS）
           </el-checkbox>
+          <el-checkbox
+            v-model="storyboardKeepCostumeLock"
+            title="勾选后分镜生图会强制保持角色参考图服装；除非剧本明确写换装，否则禁止跨镜头换衣服"
+            @change="() => saveProjectSettings(false)"
+          >
+            保持角色服装一致（默认不换装）
+          </el-checkbox>
           <el-button
             v-if="storyboards.length > 0"
             class="sb-export-srt-btn"
@@ -3285,6 +3292,8 @@ const storyboardCount = ref(null) // 分镜数量
 const videoDuration = ref(null) // 视频总长度
 /** 分镜生成时是否要求 AI 输出 narration（解说旁白） */
 const storyboardIncludeNarration = ref(false)
+/** 分镜生图：保持角色参考图服装一致（默认开启，禁止无故换装） */
+const storyboardKeepCostumeLock = ref(true)
 /** 分镜生成是否使用全能模式（universal_segment_text，对接 Seedance / 可灵 Omni） */
 const storyboardUniversalOmni = ref(false)
 const storyboardUseFirstLastFrame = ref(false)
@@ -4304,6 +4313,7 @@ async function onGenerateSbFrameImage(sb, slot) {
       aspect_ratio: projectAspectRatio.value || '16:9',
       reference_images: refImagesForCreate,
       use_first_frame_layout_lock: isLast ? !!lastFrameUseFirstLayoutLock.value : undefined,
+      keep_costume_lock: !!storyboardKeepCostumeLock.value,
     })
     ElMessage.success(isLast ? '尾帧生成任务已提交' : '首帧生成任务已提交')
     if (res?.task_id) {
@@ -4386,6 +4396,7 @@ async function onGenerateSbImage(sb) {
       style: getSelectedStyle(),
       frame_type: gridMode.value !== 'single' ? gridMode.value : undefined,
       aspect_ratio: projectAspectRatio.value || '16:9',
+      keep_costume_lock: !!storyboardKeepCostumeLock.value,
     })
     ElMessage.success('分镜图生成任务已提交')
     if (res?.task_id) {
@@ -4595,6 +4606,8 @@ async function loadDrama() {
     storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
     storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
     lastFrameUseFirstLayoutLock.value = d.metadata?.last_frame_use_first_layout_lock !== false
+    // 默认开启；仅当 metadata 明确为 false 时关闭
+    storyboardKeepCostumeLock.value = d.metadata?.storyboard_keep_costume_lock !== false
     if (storyboardUseFirstLastFrame.value && gridMode.value !== 'single') {
       gridMode.value = 'single'
     }
@@ -4828,6 +4841,7 @@ async function onRegenAffectedSbImages(assetKey, affectedBoards) {
           style: getSelectedStyle(),
           frame_type: frameTypeForCreate,
           aspect_ratio: projectAspectRatio.value || '16:9',
+          keep_costume_lock: !!storyboardKeepCostumeLock.value,
         })
         if (res?.task_id) {
           const pollRes = await new Promise((resolve) => {
@@ -4993,6 +5007,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
     storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
     last_frame_use_first_layout_lock: !!lastFrameUseFirstLayoutLock.value,
+    storyboard_keep_costume_lock: !!storyboardKeepCostumeLock.value,
   }
   if (includeGenerationStyle) {
     Object.assign(metadata, projectStylePromptMetadata())
@@ -6921,6 +6936,7 @@ async function startBatchImageGeneration() {
             style: getSelectedStyle(),
             frame_type: frameTypeForCreate,
             aspect_ratio: projectAspectRatio.value || '16:9',
+            keep_costume_lock: !!storyboardKeepCostumeLock.value,
           })
           if (res?.task_id) {
             const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7684,6 +7700,7 @@ async function runOneClickPipeline(textOnly = false) {
               style,
               frame_type: frameTypeForCreate,
               aspect_ratio: projectAspectRatio.value || '16:9',
+              keep_costume_lock: !!storyboardKeepCostumeLock.value,
             })
             if (res?.task_id) {
               const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -8040,6 +8057,7 @@ async function runRepairPipeline() {
             style,
             frame_type: frameTypeForCreate,
             aspect_ratio: projectAspectRatio.value || '16:9',
+            keep_costume_lock: !!storyboardKeepCostumeLock.value,
           })
           if (res?.task_id) {
             const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))

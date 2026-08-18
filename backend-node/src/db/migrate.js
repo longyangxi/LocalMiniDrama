@@ -322,6 +322,7 @@ function ensureAllColumns(database) {
     { name: 'frame_type',       type: 'TEXT' },
     { name: 'reference_images', type: 'TEXT' },
     { name: 'use_first_frame_layout_lock', type: 'INTEGER' },
+    { name: 'keep_costume_lock', type: 'INTEGER' },
     { name: 'size',             type: 'TEXT' },
     { name: 'quality',          type: 'TEXT' },
     { name: 'image_url',        type: 'TEXT' },

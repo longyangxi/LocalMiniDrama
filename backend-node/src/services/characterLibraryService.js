@@ -92,7 +92,8 @@ function generateCharacterImage(db, log, cfg, characterId, modelName, style) {
     prompt,
     model: modelName || undefined,
     size: imageSize,
-    quality: 'standard',
+    // gpt-image 用 medium；DALL·E 仍兼容 standard（callImageApi 会再按模型映射）
+    quality: imageClient.isGptImageModel(modelName) ? 'medium' : 'standard',
     provider: 'openai',
     user_negative_prompt: userNeg || undefined,
   });
@@ -594,7 +595,7 @@ async function generateCharacterFourViewImage(db, log, cfg, characterId, modelNa
     prompt: imagePrompt,
     model: modelName || undefined,
     size: '1792x1024',
-    quality: 'standard',
+    quality: imageClient.isGptImageModel(modelName) ? 'medium' : 'standard',
     provider: 'openai',
     user_negative_prompt: userNeg || undefined,
   });

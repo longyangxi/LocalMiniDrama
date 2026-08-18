@@ -78,6 +78,36 @@ function resolveUseFirstFrameLayoutLock(req, frameType) {
   return 1;
 }
 
+/** 分镜生图服装锁：请求显式关闭为 0，否则默认 1 */
+function resolveKeepCostumeLock(req) {
+  const v = req?.keep_costume_lock;
+  if (v === false || v === 0 || v === '0') return 0;
+  if (v === true || v === 1 || v === '1') return 1;
+  return 1;
+}
+
+/** 处理任务时：是否注入服装一致性约束（默认开启；可用行字段或剧 metadata 关闭） */
+function rowKeepCostumeLock(db, row) {
+  if (!row) return true;
+  const v = row.keep_costume_lock;
+  if (v === 0 || v === false) return false;
+  if (v === 1 || v === true) return true;
+  // 旧记录无字段时，读剧项目设置；仅明确 false 才关闭
+  if (row.drama_id) {
+    try {
+      const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(Number(row.drama_id));
+      if (dramaRow?.metadata) {
+        const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
+        if (meta && meta.storyboard_keep_costume_lock === false) return false;
+      }
+    } catch (_) {}
+  }
+  return true;
+}
+
+const COSTUME_LOCK_SUFFIX =
+  '。【服装一致性铁律】所有出场角色必须保持与角色参考图完全相同的服装款式、颜色与配饰；除非本镜头剧本/动作明确写明换衣服、更衣或换装，严禁更换服装。同一短剧连续镜头默认不换装。COSTUME LOCK: keep the exact same outfit as the character reference image; do not change clothes unless the script explicitly says so.';
+
 /** 处理任务时：尾帧且未显式关闭则启用首帧站位锁 */
 function rowUseFirstFrameLayoutLock(row) {
   if (!row || !isLastFrameType(row.frame_type)) return false;
@@ -553,9 +583,10 @@ function create(db, log, req) {
     reqSize = aspectRatioToSize(req.aspect_ratio) || null;
   }
   const useFirstFrameLayoutLock = resolveUseFirstFrameLayoutLock(req, frameType);
+  const keepCostumeLock = resolveKeepCostumeLock(req);
   const info = db.prepare(
-    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, frame_type, reference_images, use_first_frame_layout_lock, size, status, task_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, frame_type, reference_images, use_first_frame_layout_lock, keep_costume_lock, size, status, task_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
   ).run(
     req.storyboard_id ?? null,
     Number(req.drama_id) || 0,
@@ -567,6 +598,7 @@ function create(db, log, req) {
     frameType,
     refImagesJson,
     useFirstFrameLayoutLock,
+    keepCostumeLock,
     reqSize,
     taskId,
     now,
@@ -1240,6 +1272,9 @@ async function processImageGeneration(db, log, imageGenId) {
             `STYLE_TOKENS (repeat in output): ${style}`,
             `ASSETS: ${assetNames || 'none'}`,
             prevContinuityState  ? `PREV_CONTINUITY_STATE: ${JSON.stringify(prevContinuityState)}` : null,
+            rowKeepCostumeLock(db, row)
+              ? 'COSTUME_LOCK: ON — 输出 prompt 必须明确要求角色服装与参考图一致；除非 ACTION 明确写换装，禁止更换服装颜色/款式。连续短剧镜头默认不换装。'
+              : null,
             `CONTEXT_PREV: ${prevDesc}`,
             `CONTEXT_NEXT: ${nextDesc}`,
             `REMINDER: Output a STATIC SINGLE-FRAME image prompt only. No camera motion, no transitions, no split panels.`,
@@ -1355,6 +1390,15 @@ async function processImageGeneration(db, log, imageGenId) {
         log.warn('[图生] 首尾帧 prompt 清洗跳过', { id: imageGenId, error: sanitizeErr.message });
       }
     }
+
+    // ── Step 3.95: 服装一致性锁（默认开启；sanitize 之后追加，避免被清洗掉）──
+    if (row.storyboard_id && rowKeepCostumeLock(db, row) && finalPrompt) {
+      if (!finalPrompt.includes('服装一致性铁律') && !finalPrompt.includes('COSTUME LOCK')) {
+        finalPrompt = finalPrompt.trimEnd() + COSTUME_LOCK_SUFFIX;
+        log.info('[图生] Step3.95 已注入服装一致性锁', { id: imageGenId, elapsed: elapsed() });
+      }
+    }
+
     if (isFrameIdentityLock) {
       log.info('[图生] 首尾帧/关键帧：启用身份锁定负面提示词', {
         id: imageGenId,

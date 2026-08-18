@@ -146,7 +146,7 @@ function getModelFromConfig(config, preferredModel) {
   const models = Array.isArray(config.model) ? config.model : (config.model != null ? [config.model] : []);
   if (preferredModel && models.includes(preferredModel)) return preferredModel;
   if (config.default_model && models.includes(config.default_model)) return config.default_model;
-  return models[0] || 'dall-e-3';
+  return models[0] || 'gpt-image-2';
 }
 
 // 通义万象 size：格式 "宽*高"，总像素须在 589824(768*768)～1638400(1280*1280) 之间
@@ -201,6 +201,29 @@ function isAgnesImageConfig(config, model) {
   const m = String(model || '').toLowerCase();
   const base = String(config?.base_url || '').toLowerCase();
   return p === 'agnes' || /agnes-image/.test(m) || /apihub\.agnes-ai\.com/.test(base);
+}
+
+/** OpenAI GPT Image 系列（gpt-image-1 / 1.5 / 2 等），走 /images/generations，默认返回 b64_json */
+function isGptImageModel(model) {
+  return /gpt-?image/i.test(String(model || ''));
+}
+
+/**
+ * DALL·E 用 standard/hd；GPT Image 用 low/medium/high/auto。
+ * 将项目内常见的 DALL·E quality 映射为 GPT Image 可接受值，避免 400。
+ * 对 openai provider 也做同样映射（默认图生已是 gpt-image-2）。
+ */
+function resolveImageQualityForModel(model, quality, provider) {
+  if (!quality) return quality;
+  const q = String(quality).toLowerCase();
+  const needsGptImageQuality =
+    isGptImageModel(model) ||
+    (String(provider || '').toLowerCase() === 'openai' && (q === 'standard' || q === 'hd'));
+  if (!needsGptImageQuality) return quality;
+  if (q === 'hd' || q === 'high') return 'high';
+  if (q === 'standard' || q === 'medium') return 'medium';
+  if (q === 'low' || q === 'auto') return q;
+  return 'auto';
 }
 
 /** 将项目内高分辨率 size 映射为 Agnes 支持的尺寸，保持宽高比类别 */
@@ -847,6 +870,174 @@ function resolveImageRef(value, filesBaseUrl, storageLocalPath) {
   } catch (e) {
     return toPublicUrl(s);
   }
+}
+
+/** 将 resolveImageRef 结果转为 edits multipart 所需的文件块 */
+async function refToEditFilePart(ref, index, log) {
+  if (!ref || !String(ref).trim()) return null;
+  const s = String(ref).trim();
+  if (s.startsWith('data:')) {
+    const m = s.match(/^data:([^;]+);base64,([\s\S]+)$/);
+    if (!m) return null;
+    const mime = (m[1] || 'image/png').split(';')[0].trim() || 'image/png';
+    let buffer = Buffer.from(String(m[2]).replace(/\s/g, ''), 'base64');
+    if (!buffer.length) return null;
+    try {
+      const compressed = await compressImageBuffer(buffer, mime, 4096, log);
+      buffer = compressed.buffer;
+      const outMime = compressed.mimeType || mime;
+      const ext = /jpeg|jpg/i.test(outMime) ? 'jpg' : /webp/i.test(outMime) ? 'webp' : 'png';
+      return { buffer, mime: outMime, filename: `ref_${index}.${ext}` };
+    } catch (_) {
+      const ext = /jpeg|jpg/i.test(mime) ? 'jpg' : /webp/i.test(mime) ? 'webp' : 'png';
+      return { buffer, mime, filename: `ref_${index}.${ext}` };
+    }
+  }
+  try {
+    const res = await fetch(s, {
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(60000)
+        : undefined,
+    });
+    if (!res.ok) {
+      if (log) log.warn('[GPT Image edits] 下载参考图失败', { index, status: res.status, url: s.slice(0, 80) });
+      return null;
+    }
+    const mime = (res.headers.get('content-type') || 'image/png').split(';')[0].trim() || 'image/png';
+    let buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) return null;
+    try {
+      const compressed = await compressImageBuffer(buffer, mime, 4096, log);
+      buffer = compressed.buffer;
+      const outMime = compressed.mimeType || mime;
+      const ext = /jpeg|jpg/i.test(outMime) ? 'jpg' : /webp/i.test(outMime) ? 'webp' : 'png';
+      return { buffer, mime: outMime, filename: `ref_${index}.${ext}` };
+    } catch (_) {
+      const ext = /jpeg|jpg/i.test(mime) ? 'jpg' : /webp/i.test(mime) ? 'webp' : 'png';
+      return { buffer, mime, filename: `ref_${index}.${ext}` };
+    }
+  } catch (e) {
+    if (log) log.warn('[GPT Image edits] 下载参考图异常', { index, error: e.message });
+    return null;
+  }
+}
+
+/** OpenAI GPT Image：带参考图时走 /images/edits（multipart），不能把 image 塞进 /images/generations */
+function buildGptImageEditUrl(config) {
+  const base = (config.base_url || '').replace(/\/$/, '');
+  const ep = String(config.endpoint || '').trim();
+  if (ep && /generations/i.test(ep)) {
+    const path = (ep.startsWith('/') ? ep : '/' + ep).replace(/generations/i, 'edits');
+    return base + path;
+  }
+  if (ep && /edits/i.test(ep)) {
+    return base + (ep.startsWith('/') ? ep : '/' + ep);
+  }
+  return base + '/images/edits';
+}
+
+async function callGptImageEditApi(config, log, opts) {
+  const {
+    prompt,
+    model,
+    size,
+    quality,
+    image_gen_id,
+    resolved_refs: resolvedRefs,
+    provider,
+  } = opts;
+  const url = buildGptImageEditUrl(config);
+  const fileParts = [];
+  for (let i = 0; i < (resolvedRefs || []).length; i++) {
+    const part = await refToEditFilePart(resolvedRefs[i], i, log);
+    if (part) fileParts.push(part);
+  }
+  if (!fileParts.length) {
+    return { error: 'GPT Image 参考图解析失败，无法调用 /images/edits' };
+  }
+
+  const form = new FormData();
+  form.append('model', model || 'gpt-image-2');
+  form.append('prompt', prompt || '');
+  form.append('n', '1');
+  if (size) form.append('size', String(size));
+  const effectiveQuality = resolveImageQualityForModel(model, quality, provider || config.provider);
+  if (effectiveQuality) form.append('quality', String(effectiveQuality));
+  // 多张参考图必须用 image[]；重复传 image 会 400 Duplicate parameter
+  const imageField = fileParts.length > 1 ? 'image[]' : 'image';
+  for (const part of fileParts) {
+    const file = typeof File === 'function'
+      ? new File([part.buffer], part.filename, { type: part.mime })
+      : new Blob([part.buffer], { type: part.mime });
+    if (typeof File === 'function') form.append(imageField, file);
+    else form.append(imageField, file, part.filename);
+  }
+
+  log.info('[GPT Image edits] 请求', {
+    image_gen_id,
+    url: url.slice(0, 80),
+    model,
+    size,
+    quality: effectiveQuality,
+    image_field: imageField,
+    ref_count: fileParts.length,
+    ref_bytes: fileParts.map((p) => p.buffer.length),
+  });
+
+  const fetchOpts = {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + (config.api_key || '') },
+    body: form,
+  };
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    fetchOpts.signal = AbortSignal.timeout(IMAGE_HTTP_TIMEOUT_MS);
+  }
+
+  let res;
+  try {
+    res = await fetch(url, fetchOpts);
+  } catch (e) {
+    log.error('[GPT Image edits] 网络错误', { image_gen_id, error: e.message });
+    return {
+      error: e.message && e.message.includes('timeout')
+        ? e.message
+        : ('图片生成网络请求失败: ' + e.message),
+    };
+  }
+  const raw = await res.text();
+  if (!res.ok) {
+    log.error('[GPT Image edits] 失败', { image_gen_id, status: res.status, body: raw.slice(0, 400) });
+    let errMsg = '图片生成请求失败: ' + res.status;
+    try {
+      const errJson = JSON.parse(raw);
+      const msg = errJson.error?.message || errJson.message || errJson.error;
+      if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
+    } catch (_) {
+      if (raw) errMsg += ' - ' + raw.slice(0, 200);
+    }
+    return { error: errMsg };
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (_) {
+    return { error: '图片生成返回格式异常' };
+  }
+  const item = data.data && data.data[0];
+  let imageUrl = item && (item.url || item.image_url);
+  if (!imageUrl && item?.b64_json) {
+    imageUrl = `data:image/png;base64,${String(item.b64_json).replace(/\s/g, '')}`;
+  }
+  if (!imageUrl) {
+    log.warn('[GPT Image edits] 无图片字段', {
+      image_gen_id,
+      response_keys: data ? Object.keys(data) : [],
+      first_item_keys: item ? Object.keys(item) : [],
+    });
+    return { error: '未返回图片地址' };
+  }
+  log.info('[GPT Image edits] 成功', { image_gen_id, has_b64: !!item?.b64_json, has_url: !!item?.url });
+  return { image_url: imageUrl };
 }
 
 // 通义万象：支持参考图（角色/场景），content 为 [text, image, image, ...]；本地调试时参考图可转 base64
@@ -1505,6 +1696,7 @@ async function callImageApi(db, log, opts) {
   const isAgnes = isAgnesImageConfig(config, model);
   // doubao-seedream 系列模型（含通过自定义代理使用的场景）：使用 volcengine 图片 API 规范
   const isSeedream = isVolc || /seedream|doubao/i.test(model);
+  const isGptImage = isGptImageModel(model);
   // 解析参考图：本地路径/localhost URL → base64，公网 URL → 直接传
   const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
   const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
@@ -1516,10 +1708,33 @@ async function callImageApi(db, log, opts) {
     });
   }
 
+  // GPT Image 带参考图必须走 /images/edits；JSON generations 不接受 image 字段
+  if (isGptImage && resolvedRefs.length > 0) {
+    return callGptImageEditApi(config, log, {
+      prompt: effectivePrompt,
+      model,
+      size,
+      quality,
+      image_gen_id,
+      resolved_refs: resolvedRefs,
+      provider,
+    });
+  }
+
   // doubao-seedream-4-5+ 要求最低 3686400 像素，不足时等比放大；Agnes 需映射到官方支持尺寸
   let effectiveSize = size;
   if (isSeedream && size) effectiveSize = fixSeedreamSize(size);
   else if (isAgnes && size) effectiveSize = fixAgnesImageSize(size);
+
+  const effectiveQuality = resolveImageQualityForModel(model, quality, provider);
+
+  // 官方 OpenAI / DALL·E generations 不支持 image；仅 Seedream/Volc 在 JSON body 里传 image
+  const attachJsonImageRefs = resolvedRefs.length > 0 && !isAgnes && (isSeedream || isVolc);
+  if (resolvedRefs.length > 0 && !attachJsonImageRefs && !isAgnes) {
+    log.warn('[图生] 当前模型不支持 generations+image，已忽略参考图字段', {
+      image_gen_id, model, provider, protocol,
+    });
+  }
 
   const body = {
     model,
@@ -1527,14 +1742,14 @@ async function callImageApi(db, log, opts) {
     // doubao-seedream API 不使用 n，其他 OpenAI 兼容接口保留
     ...(!isSeedream ? { n: 1 } : {}),
     ...(effectiveSize ? { size: effectiveSize } : {}),
-    ...(quality ? { quality } : {}),
+    ...(effectiveQuality ? { quality: effectiveQuality } : {}),
     // volcengine 原生或 doubao-seedream 模型均需关闭水印（默认为 true）
     ...((isVolc || isSeedream) ? { watermark: false } : {}),
     // 多张参考图时加 negative_prompt，防止模型把参考图拼成左右分割的合图
     // Doubao/Seedream 原生支持；通用 OpenAI-compat 接口大多也会接受该字段（不支持的会忽略）
-    ...(mergedNegativePrompt ? { negative_prompt: mergedNegativePrompt } : {}),
+    ...((mergedNegativePrompt && (isSeedream || isVolc || isAgnes)) ? { negative_prompt: mergedNegativePrompt } : {}),
     // 参考图字段：volcengine doubao-seedream API 规范使用 image（数组），见官方文档
-    ...(resolvedRefs.length > 0 && !isAgnes ? { image: resolvedRefs } : {}),
+    ...(attachJsonImageRefs ? { image: resolvedRefs } : {}),
     // Agnes Image 2.x：参考图放在 extra_body.image
     ...(isAgnes && resolvedRefs.length > 0 ? { extra_body: { image: resolvedRefs, response_format: 'url' } } : {}),
   };
@@ -1918,6 +2133,9 @@ module.exports = {
   refListHasCanonical,
   fixAgnesImageSize,
   isAgnesImageConfig,
+  isGptImageModel,
+  resolveImageQualityForModel,
+  buildGptImageEditUrl,
   /** 图床 URL 缓存（image_proxy_cache），供 SD2 认证等复用 */
   getProxyCache,
   getProxyCacheValidated,

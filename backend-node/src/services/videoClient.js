@@ -1614,17 +1614,27 @@ async function callDashScopeVideoApi(config, log, opts) {
     url = base + DASHSCOPE_VIDEO_GENERATION;
     const rawRefs = Array.isArray(reference_urls) ? reference_urls.filter(Boolean).slice(0, 5) : [];
     const refs = rawRefs.map(toImageInput).filter(Boolean);
-    if (refs.length === 0) return { error: 'wan2.6-r2v-flash ??????????? 5 ??' };
+    if (refs.length === 0) return { error: 'wan2.6-r2v-flash 需要至少 1 张参考图（最多 5 张）' };
+    // 官方：duration 取 [2, 10] 整数，默认 5；未传会一直落到 5 秒
+    const requested = Number(duration);
+    const r2vDur = Number.isFinite(requested) && requested > 0
+      ? Math.min(10, Math.max(2, Math.round(requested)))
+      : 5;
+    if (Number.isFinite(requested) && requested > 10) {
+      log.warn('[DashScope r2v] 请求时长超过模型上限，已钳制为 10 秒', {
+        video_gen_id, requested, effective: r2vDur, model,
+      });
+    }
     body = {
       model,
       input: { prompt: prompt || '', reference_urls: refs },
-      parameters: { prompt_extend: true },
+      parameters: { prompt_extend: true, duration: r2vDur, shot_type: 'multi' },
     };
   } else {
-    return { error: '????????????: ' + model };
+    return { error: '不支持的通义万相视频模型: ' + model };
   }
 
-  const shorten = (v) => (v && v.startsWith('data:') ? '(base64 ???)' : v);
+  const shorten = (v) => (v && v.startsWith('data:') ? '(base64 …)' : v);
   const imageUrlsInBody = body.input
     ? {
         first_frame_url: shorten(body.input.first_frame_url),
@@ -1634,13 +1644,19 @@ async function callDashScopeVideoApi(config, log, opts) {
         reference_urls: Array.isArray(body.input.reference_urls) ? body.input.reference_urls.map(shorten) : body.input.reference_urls,
       }
     : {};
-  log.info('DashScope ???????base64 ??? = ?????? base64??? download image failed?', {
+  log.info('DashScope video body images', {
     model,
     video_gen_id,
-    files_base_url: baseUrl || '(???)',
+    files_base_url: baseUrl || '(empty)',
+    duration: body.parameters?.duration,
     image_urls: imageUrlsInBody,
   });
-  log.info('Video API request (DashScope)', { url: url.slice(0, 70), model, video_gen_id });
+  log.info('Video API request (DashScope)', {
+    url: url.slice(0, 70),
+    model,
+    video_gen_id,
+    duration: body.parameters?.duration,
+  });
   const res = await fetch(url, {
     method: 'POST',
     headers: {
