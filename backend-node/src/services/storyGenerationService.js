@@ -104,14 +104,16 @@ function persistThreeStageArtifacts(db, log, dramaId, bible, episodes) {
     log?.warn?.('[剧本] 故事圣经落库失败', { error: err.message });
   }
   for (const ep of episodes) {
-    if (!ep.beat_sheet && !ep.summary) continue;
+    if (!ep.beat_sheet && !ep.summary && !ep.story_state && !ep.quality_report) continue;
     try {
       db.prepare(
-        `UPDATE episodes SET beat_sheet = ?, summary = ?, updated_at = ?
+        `UPDATE episodes SET beat_sheet = ?, summary = ?, story_state = ?, quality_report = ?, updated_at = ?
           WHERE drama_id = ? AND episode_number = ? AND deleted_at IS NULL`
       ).run(
         ep.beat_sheet ? JSON.stringify(ep.beat_sheet) : null,
         ep.summary || null,
+        ep.story_state ? JSON.stringify(ep.story_state) : null,
+        ep.quality_report ? JSON.stringify(ep.quality_report) : null,
         now,
         dramaId,
         ep.episode
@@ -140,8 +142,10 @@ async function processStoryGeneration(db, log, taskId, req) {
         bible = out.bible;
         episodes = out.episodes;
       } catch (err) {
-        log.warn('[剧本] 三段式生成失败，回落到一次性生成', { error: err.message });
-        taskService.updateTaskStatus(db, taskId, 'processing', 20, '三段式生成失败，正在回落到快速模式...');
+        const allowFallback = req.allow_legacy_fallback === true || String(req.allow_legacy_fallback).toLowerCase() === 'true';
+        if (!allowFallback) throw err;
+        log.warn('[剧本] 三段式生成失败，按显式配置回落到一次性生成', { error: err.message });
+        taskService.updateTaskStatus(db, taskId, 'processing', 20, '专业生成失败，正在按设置回落到快速模式...');
       }
     }
 
@@ -188,6 +192,8 @@ async function processStoryGeneration(db, log, taskId, req) {
       episode_count: episodes.length,
       mode: bible ? 'three_stage' : 'legacy',
       has_story_bible: !!bible,
+      auto_polished: !!bible && req.auto_polish !== false,
+      quality_summaries: episodes.map((ep) => ep.quality_report?.summary).filter(Boolean),
     });
     log.info('Story generation completed and saved', { task_id: taskId, drama_id: dramaId, episode_count: episodes.length });
   } catch (err) {

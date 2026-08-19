@@ -312,6 +312,7 @@ function rowToDrama(r) {
     thumbnail: r.thumbnail,
     tags: r.tags,
     metadata: metadata || {},
+    story_bible: parseJsonColumn(r.story_bible),
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
@@ -325,6 +326,10 @@ function rowToEpisode(r) {
     title: r.title,
     script_content: r.script_content,
     description: r.description,
+    summary: r.summary ?? null,
+    beat_sheet: parseJsonColumn(r.beat_sheet),
+    story_state: parseJsonColumn(r.story_state),
+    quality_report: parseJsonColumn(r.quality_report),
     duration: r.duration ?? 0,
     status: r.status || 'draft',
     video_url: r.video_url,

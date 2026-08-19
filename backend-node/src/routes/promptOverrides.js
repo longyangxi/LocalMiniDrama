@@ -5,9 +5,29 @@ const response = require('../response');
 // 提示词元数据：label / description 在此维护；内容（default_body / locked_suffix）从 promptI18n 动态读取
 const PROMPT_META = [
   {
+    key: 'story_bible_system',
+    label: '故事圣经提示词',
+    description: '控制主题、人物内在矛盾、关系弧与全剧创作边界',
+  },
+  {
+    key: 'story_beat_sheet_system',
+    label: '分集节拍提示词',
+    description: '控制全剧因果、节奏、价值变化与伏笔回收',
+  },
+  {
+    key: 'story_episode_system',
+    label: '单集正文提示词',
+    description: '控制人物选择、潜台词、对白与单集情感落点',
+  },
+  {
+    key: 'story_polish_system',
+    label: '剧本自动打磨提示词',
+    description: '控制自动总编剧评审、定向修订和跨集连续性状态',
+  },
+  {
     key: 'story_expansion_system',
-    label: '故事生成提示词',
-    description: '控制 AI 如何将故事梗概扩写成完整剧本',
+    label: '旧版快速故事提示词',
+    description: '仅控制显式 legacy/快速兼容模式；专业三段式请编辑上方四项',
   },
   {
     key: 'storyboard_system',

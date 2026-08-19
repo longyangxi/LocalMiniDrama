@@ -31,6 +31,14 @@ const AI_PRODUCIBILITY_RULES_EN = `【AI PRODUCIBILITY CONTRACT (everything is g
 7. Props, costume and architecture must match the declared era and region. No anachronisms.
 8. Appearance and costume stay fixed within an episode. Any change of costume must be explicitly written as an on-screen action.`;
 
+const AI_STORY_BUDGET_ZH = `【制作预算边界】
+- 全剧以少量核心人物和 3-6 个可复用场景为主，不把群演、大场面或复杂物理表演设为故事成立的唯一条件。
+- 这里只约束故事规模，不要提前把人物选择和情感冲突拆成镜头；先保住最有力量的戏，具体可拍化留到单集正文与分镜阶段。`;
+
+const AI_STORY_BUDGET_EN = `【PRODUCTION BUDGET ENVELOPE】
+- Build around a small principal cast and 3-6 reusable locations. Do not make crowds, spectacle or precise physical performance the only way the story can work.
+- This constrains scale, not emotional ambition. Preserve the strongest character choices; shot-level adaptation happens later.`;
+
 /** 短剧结构方法论 */
 const SHORT_DRAMA_CRAFT_ZH = `【短剧结构方法论】
 - **黄金 3 秒**：每集开场第一个画面就必须抛出冲突、悬念或信息差，禁止用环境铺垫、天气描写、人物介绍开场。
@@ -48,15 +56,24 @@ const SHORT_DRAMA_CRAFT_EN = `【SHORT-DRAMA CRAFT】
 - **Short lines**: keep each spoken line under ~15 words. Dialogue drives conflict; it never explains backstory.
 - **Information asymmetry**: at every moment one party knows something another does not. That is where suspense comes from.`;
 
+function editablePrompt(key, fallback, episodeCount) {
+  try {
+    const custom = require('./promptI18n').getOverrideInMemory(key);
+    if (custom) return String(custom).replace(/\$\{n\}/g, String(episodeCount || 1));
+  } catch (_) {}
+  return fallback;
+}
+
 /** 第一段：故事圣经 */
 function getStoryBibleSystemPrompt(isEn, episodeCount) {
   const n = Math.max(1, Number(episodeCount) || 1);
   if (isEn) {
-    return `You are a short-drama showrunner. From the user's premise, build the STORY BIBLE that all ${n} episode(s) will be written against.
+    const role = editablePrompt('story_bible_system', `You are a short-drama showrunner. From the user's premise, build the STORY BIBLE that all ${n} episode(s) will be written against.`, n);
+    return `${role}
 
 ${SHORT_DRAMA_CRAFT_EN}
 
-${AI_PRODUCIBILITY_RULES_EN}
+${AI_STORY_BUDGET_EN}
 
 Return ONLY a JSON object, no markdown fences, no commentary:
 {
@@ -64,6 +81,11 @@ Return ONLY a JSON object, no markdown fences, no commentary:
   "logline": "one sentence: protagonist + goal + obstacle + stakes",
   "core_conflict": "the engine that sustains all ${n} episodes",
   "tone": "e.g. cold revenge thriller / warm slice-of-life",
+  "theme_question": "the human question the story argues rather than a slogan",
+  "theme_thesis": "what the protagonist initially believes",
+  "counter_thesis": "the credible opposing answer embodied by another character",
+  "ending_truth": "what the ending proves through action",
+  "emotional_promise": "the primary emotional experience promised to the audience",
   "era_setting": "period and region, concrete enough to constrain props and costume",
   "world_rules": ["hard rules of this world that must never be broken"],
   "locations": ["3-6 reusable locations for the whole series"],
@@ -74,23 +96,31 @@ Return ONLY a JSON object, no markdown fences, no commentary:
       "identity": "age, occupation, social position",
       "want": "what they consciously pursue",
       "need": "what they actually lack",
+      "lie": "the false belief they protect",
+      "wound": "the concrete experience behind that belief",
       "flaw": "the trait that causes their trouble",
+      "secret": "what they actively conceal",
+      "contradiction": "two opposing but believable qualities",
+      "moral_boundary": "what they believe they would never do",
       "arc": "where they start and end across the series",
       "speech_style": "how their dialogue is recognisably different",
       "appearance_keywords": "fixed visual identity: build, face, hair, signature costume"
     }
   ],
-  "relationships": [{"from": "...", "to": "...", "relation": "...", "tension": "the unresolved thing between them"}],
+  "relationships": [{"from": "...", "to": "...", "relation": "...", "tension": "the unresolved thing between them", "emotional_debt": "what is owed but unspoken", "arc": "how the relationship changes"}],
+  "motifs": ["2-4 recurring concrete images/sounds/objects tied to emotion"],
+  "anti_cliches": ["specific shortcuts this story must avoid"],
   "hook_bank": ["${n * 2} reusable reversals/payoffs sized for this story"],
   "taboos": ["elements that must never appear, including anachronisms for this era"]
 }`;
   }
 
-  return `你是一位短剧总编剧。请根据用户提供的梗概，先搭建这 ${n} 集共用的「故事圣经」。后续每一集都必须严格依据它创作。
+  const role = editablePrompt('story_bible_system', `你是一位短剧总编剧。请根据用户提供的梗概，先搭建这 ${n} 集共用的「故事圣经」。后续每一集都必须严格依据它创作。`, n);
+  return `${role}
 
 ${SHORT_DRAMA_CRAFT_ZH}
 
-${AI_PRODUCIBILITY_RULES_ZH}
+${AI_STORY_BUDGET_ZH}
 
 **只返回一个 JSON 对象**，不要 markdown 代码块，不要任何说明文字：
 {
@@ -98,6 +128,11 @@ ${AI_PRODUCIBILITY_RULES_ZH}
   "logline": "一句话故事：主角 + 目标 + 阻碍 + 代价",
   "core_conflict": "能支撑全部 ${n} 集的核心矛盾引擎",
   "tone": "整体基调，如「冷冽复仇」「温情日常」",
+  "theme_question": "故事真正争论的人性问题，不写成口号",
+  "theme_thesis": "主角起初相信的答案",
+  "counter_thesis": "由另一个可信角色代表的相反答案",
+  "ending_truth": "结局最终通过行动证明了什么",
+  "emotional_promise": "承诺给观众的核心情感体验",
   "era_setting": "时代与地域，要具体到能约束服装和道具",
   "world_rules": ["本剧世界观的硬规则，任何一集都不得违反"],
   "locations": ["全剧复用的 3-6 个核心场景，写清地点与特征"],
@@ -108,13 +143,20 @@ ${AI_PRODUCIBILITY_RULES_ZH}
       "identity": "年龄、身份、社会位置",
       "want": "他自以为想要的",
       "need": "他真正缺的",
+      "lie": "他为了自保而坚信的错误观念",
+      "wound": "形成这个观念的具体经历",
       "flaw": "会给他招来麻烦的性格缺陷",
+      "secret": "他正在主动隐瞒的事实",
+      "contradiction": "同时成立的两种相反特质",
+      "moral_boundary": "他自认为绝不会跨越的底线",
       "arc": "全剧起点状态 → 终点状态",
       "speech_style": "说话方式的可辨识特征，用词、语速、口头禅",
       "appearance_keywords": "固定视觉身份：体型、脸型、发型、标志性服装"
     }
   ],
-  "relationships": [{"from": "角色A", "to": "角色B", "relation": "关系", "tension": "两人之间尚未解决的张力"}],
+  "relationships": [{"from": "角色A", "to": "角色B", "relation": "关系", "tension": "尚未解决的张力", "emotional_debt": "未说出口的亏欠或索取", "arc": "关系如何发生不可逆变化"}],
+  "motifs": ["与情感绑定、可重复出现的具体意象/声音/物件，2-4个"],
+  "anti_cliches": ["本故事必须避开的具体俗套捷径"],
   "hook_bank": ["为本故事量身准备的 ${n * 2} 个反转/爽点素材，供分集调用"],
   "taboos": ["本剧绝不能出现的元素，含该时代不该有的物件"]
 }`;
@@ -124,7 +166,8 @@ ${AI_PRODUCIBILITY_RULES_ZH}
 function getBeatSheetSystemPrompt(isEn, episodeCount) {
   const n = Math.max(1, Number(episodeCount) || 1);
   if (isEn) {
-    return `You are a short-drama story editor. Using the STORY BIBLE provided, lay out the beat sheet for all ${n} episode(s).
+    const role = editablePrompt('story_beat_sheet_system', `You are a short-drama story editor. Using the STORY BIBLE provided, lay out the beat sheet for all ${n} episode(s).`, n);
+    return `${role}
 
 ${SHORT_DRAMA_CRAFT_EN}
 
@@ -132,6 +175,8 @@ Rules:
 - Each episode gets 5-7 beats. Beat 1 is the hook, the last beat is the cliffhanger.
 - Consecutive episodes must interlock: the cliffhanger of episode k is answered (or deepened) in the first beat of episode k+1.
 - Do not reuse the same reversal twice across the series.
+- Vary episode rhythm. A revelation is not mandatory; an earned choice, relationship shift or cost can be the turn.
+- Every episode must contain a protagonist strategy, a consequential choice, and a value change.
 - Every beat must name which characters are present. Never more than 2 in one beat's on-screen confrontation.
 
 Return ONLY a JSON array of ${n} objects, no markdown:
@@ -143,6 +188,10 @@ Return ONLY a JSON array of ${n} objects, no markdown:
     "location_plan": ["at most 3 locations used this episode"],
     "hook": "the first image/line of the episode, must contain conflict",
     "cliffhanger": "exactly where the episode cuts off",
+    "episode_desire": "what the focal character actively tries to achieve",
+    "choice_and_cost": "the consequential choice and its price",
+    "value_change": "the key relationship/belief/value before → after",
+    "payoff_ids": ["promises planted or paid in this episode"],
     "beats": [
       {"beat": 1, "type": "hook|setup|turn|peak|cliffhanger", "characters": ["..."], "content": "what happens, filmable"}
     ]
@@ -150,7 +199,8 @@ Return ONLY a JSON array of ${n} objects, no markdown:
 ]`;
   }
 
-  return `你是一位短剧责编。请依据给定的「故事圣经」，为全部 ${n} 集排出节拍表。
+  const role = editablePrompt('story_beat_sheet_system', `你是一位短剧责编。请依据给定的「故事圣经」，为全部 ${n} 集排出节拍表。`, n);
+  return `${role}
 
 ${SHORT_DRAMA_CRAFT_ZH}
 
@@ -158,6 +208,8 @@ ${SHORT_DRAMA_CRAFT_ZH}
 - 每集 5-7 个节拍。第 1 拍必须是钩子，最后 1 拍必须是卡点。
 - 相邻集必须咬合：第 k 集的卡点，要在第 k+1 集的第 1 拍被回应或加深。
 - 同一个反转不得在全剧中重复使用。
+- 全剧要有强弱呼吸；不强制每集揭露秘密，人物选择、关系越界、代价兑现也可以成为转折。
+- 每集必须包含主角采取的策略、一次有后果的选择，以及至少一项价值变化。
 - 每个节拍必须写明在场角色；单个节拍的正面冲突不得超过 2 人同框。
 - 每集使用的场景不超过 3 个，且应优先从故事圣经的 locations 中挑选。
 
@@ -170,6 +222,10 @@ ${SHORT_DRAMA_CRAFT_ZH}
     "location_plan": ["本集使用的场景，最多3个"],
     "hook": "本集开场的第一个画面或第一句台词，必须自带冲突",
     "cliffhanger": "本集卡在哪一刻结束",
+    "episode_desire": "本集焦点人物主动争取什么",
+    "choice_and_cost": "本集关键选择及其即时或延迟代价",
+    "value_change": "最重要的关系/信念/价值从什么变成什么",
+    "payoff_ids": ["本集埋下或回收的承诺标识"],
     "beats": [
       {"beat": 1, "type": "hook|setup|turn|peak|cliffhanger", "characters": ["在场角色"], "content": "这一拍发生什么，必须可拍"}
     ]
@@ -181,7 +237,8 @@ ${SHORT_DRAMA_CRAFT_ZH}
 function getEpisodeScriptSystemPrompt(isEn, wordsPerEpisode) {
   const words = Math.max(300, Number(wordsPerEpisode) || 800);
   if (isEn) {
-    return `You are a short-drama screenwriter. Write the full prose script for ONE episode, following the beat sheet exactly.
+    const role = editablePrompt('story_episode_system', 'You are a short-drama screenwriter. Write the full prose script for ONE episode, following the beat sheet without changing its major facts or order.', 1);
+    return `${role}
 
 ${SHORT_DRAMA_CRAFT_EN}
 
@@ -192,13 +249,17 @@ Format rules:
 - Scene description, character action and dialogue interleaved as continuous narrative.
 - Dialogue lines written as: CharacterName: "line"
 - Around ${words} words.
-- Hit every beat from the beat sheet in order. Do not add beats that are not in the sheet.
+- Hit every major beat in order. You may add micro-beats that deepen character, subtext and emotional progression without changing plot facts.
+- Dialogue carries surface intent; behavior reveals the truer intent. Avoid backstory exposition.
+- The focal character must choose, and the climax must charge a meaningful cost.
+- Preserve one quiet, specific detail with emotional residue.
 - End exactly on the declared cliffhanger. Do not resolve it.
 
 Return ONLY the episode body text.`;
   }
 
-  return `你是一位短剧编剧。请严格按照给定的本集节拍表，写出这一集的完整剧本正文。
+  const role = editablePrompt('story_episode_system', '你是一位短剧编剧。请按照给定的本集节拍表，写出这一集的完整剧本正文。', 1);
+  return `${role}
 
 ${SHORT_DRAMA_CRAFT_ZH}
 
@@ -209,7 +270,10 @@ ${AI_PRODUCIBILITY_RULES_ZH}
 - **禁止**输出镜头编号、「内景/外景」场次标记、markdown、JSON 或任何格式标记。
 - 对白独立成行，写作：角色名："台词"
 - 全文约 ${words} 字。
-- 必须按顺序覆盖节拍表中的每一拍，不得增加节拍表之外的情节。
+- 必须按顺序覆盖主要节拍；允许增加不改变情节事实、只服务于人物、潜台词和情绪递进的微节拍。
+- 台词表达表面意图，动作泄露真实意图；禁止用对白讲解背景资料。
+- 焦点人物必须作出选择，高潮必须让选择产生有意义的代价。
+- 至少保留一个安静、具体且有余味的生活细节。
 - 必须精确停在节拍表声明的卡点上，不得写成完整收束。
 
 **只返回本集正文，不要任何前言、标题或解释。**`;
@@ -260,6 +324,11 @@ function buildBibleDigest(bible, isEn) {
     push('Logline', bible.logline);
     push('Core conflict', bible.core_conflict);
     push('Tone', bible.tone);
+    push('Theme question', bible.theme_question);
+    push('Initial belief', bible.theme_thesis);
+    push('Counter thesis', bible.counter_thesis);
+    push('Ending truth', bible.ending_truth);
+    push('Emotional promise', bible.emotional_promise);
     push('Era & setting', bible.era_setting);
     push('World rules', bible.world_rules);
     push('Locations', bible.locations);
@@ -269,17 +338,37 @@ function buildBibleDigest(bible, isEn) {
     push('一句话故事', bible.logline);
     push('核心矛盾', bible.core_conflict);
     push('基调', bible.tone);
+    push('主题问题', bible.theme_question);
+    push('主角起初相信', bible.theme_thesis);
+    push('相反答案', bible.counter_thesis);
+    push('结局证明', bible.ending_truth);
+    push('情感承诺', bible.emotional_promise);
     push('时代与地域', bible.era_setting);
     push('世界观硬规则', bible.world_rules);
     push('可用场景', bible.locations);
     push('禁忌', bible.taboos);
   }
+  push(isEn ? 'Recurring motifs' : '贯穿意象', bible.motifs);
+  push(isEn ? 'Avoid these clichés' : '反俗套约束', bible.anti_cliches);
 
   if (Array.isArray(bible.characters) && bible.characters.length) {
     lines.push(isEn ? 'Characters:' : '角色：');
     for (const c of bible.characters) {
       if (!c || !c.name) continue;
-      const bits = [c.identity, c.want && `想要:${c.want}`, c.flaw && `缺陷:${c.flaw}`, c.speech_style && `说话方式:${c.speech_style}`]
+      const bits = [
+        c.identity,
+        c.want && `想要:${c.want}`,
+        c.need && `真正需要:${c.need}`,
+        c.lie && `错误信念:${c.lie}`,
+        c.wound && `创伤来源:${c.wound}`,
+        c.flaw && `缺陷:${c.flaw}`,
+        c.secret && `秘密:${c.secret}`,
+        c.contradiction && `矛盾性:${c.contradiction}`,
+        c.moral_boundary && `底线:${c.moral_boundary}`,
+        c.arc && `人物弧:${c.arc}`,
+        c.speech_style && `说话方式:${c.speech_style}`,
+        c.appearance_keywords && `视觉身份:${c.appearance_keywords}`,
+      ]
         .filter(Boolean).join('；');
       lines.push(`  - ${c.name}（${c.role || 'supporting'}）${bits}`);
     }
@@ -289,11 +378,58 @@ function buildBibleDigest(bible, isEn) {
     lines.push(isEn ? 'Relationships:' : '人物关系：');
     for (const r of bible.relationships) {
       if (!r || !r.from) continue;
-      lines.push(`  - ${r.from} → ${r.to}：${r.relation || ''}${r.tension ? `（张力：${r.tension}）` : ''}`);
+      lines.push(`  - ${r.from} → ${r.to}：${r.relation || ''}${r.tension ? `（张力：${r.tension}）` : ''}${r.emotional_debt ? `；情感债:${r.emotional_debt}` : ''}${r.arc ? `；关系弧:${r.arc}` : ''}`);
     }
   }
 
   return lines.join('\n');
+}
+
+function buildCreativePreferencesBlock(isEn, preferences) {
+  if (!preferences || typeof preferences !== 'object') return '';
+  const emotion = String(preferences.primary_emotion || '').trim();
+  const ending = String(preferences.ending_flavor || '').trim();
+  const avoid = String(preferences.avoid || '').trim();
+  if (!emotion && !ending && !avoid) return '';
+  return isEn
+    ? ['CREATOR PREFERENCES (optional; honor without forcing):', emotion && `Primary audience emotion: ${emotion}`, ending && `Ending aftertaste: ${ending}`, avoid && `Avoid: ${avoid}`].filter(Boolean).join('\n')
+    : ['【创作偏好（可选，不要生硬套用）】', emotion && `主要情绪：${emotion}`, ending && `结局余味：${ending}`, avoid && `不想出现：${avoid}`].filter(Boolean).join('\n');
+}
+
+function getEpisodePolishSystemPrompt(isEn) {
+  const fallback = isEn
+    ? 'You are the head writer and continuity editor. Make a restrained revision that preserves working material and only fixes the most damaging issues in agency, causality, subtext, emotional cost, specificity, originality and continuity.'
+    : '你是本剧的总编剧兼连续性编辑。做克制的定向修订：保留已经成立的个性与情节，只修复最影响人物主动性、因果、潜台词、情感代价、具体性、原创性和连续性的地方。';
+  const role = editablePrompt('story_polish_system', fallback, 1);
+  const schema = `{
+  "revised_script": "修订后的完整单集正文；若无需修改则原样返回",
+  "quality_report": {
+    "scores": {"agency": 0, "causality": 0, "subtext": 0, "emotional_cost": 0, "specificity": 0, "originality": 0, "continuity": 0, "producibility": 0},
+    "issues": ["最多3个具体问题"],
+    "changes": ["实际完成的修改，最多3项"],
+    "summary": "一句话说明本次打磨重点"
+  },
+  "continuity_state": {
+    "facts_revealed": [],
+    "knowledge_by_character": {},
+    "belief_changes": [],
+    "relationship_changes": [],
+    "promises_opened": [],
+    "promises_paid": [],
+    "emotional_debts": [],
+    "prop_states": {},
+    "character_arc_positions": {}
+  }
+}`;
+  return `${role}\n\n评分均为0-5整数。连续性状态必须是截至本集结尾的完整快照，不只是本集增量。不得改变节拍表主要事实、人物身份或声明的卡点。\n\n只返回JSON：\n${schema}`;
+}
+
+function buildEpisodePolishUserPrompt(isEn, { bibleDigest, previousState, episodeBeat, draft }) {
+  const stateText = previousState && typeof previousState === 'object' ? JSON.stringify(previousState, null, 2) : String(previousState || '');
+  const beatText = typeof episodeBeat === 'object' ? JSON.stringify(episodeBeat, null, 2) : String(episodeBeat || '');
+  return isEn
+    ? `SERIES BIBLE:\n${bibleDigest}\n\nSTATE BEFORE THIS EPISODE:\n${stateText || '(series opening)'}\n\nAPPROVED BEAT SHEET:\n${beatText}\n\nFIRST DRAFT:\n${draft}`
+    : `【全剧故事圣经】\n${bibleDigest}\n\n【本集开始前的连续性状态】\n${stateText || '（全剧开篇）'}\n\n【已批准的本集节拍】\n${beatText}\n\n【单集初稿】\n${draft}`;
 }
 
 module.exports = {
@@ -307,4 +443,7 @@ module.exports = {
   buildBeatSheetUserPrompt,
   buildEpisodeScriptUserPrompt,
   buildBibleDigest,
+  buildCreativePreferencesBlock,
+  getEpisodePolishSystemPrompt,
+  buildEpisodePolishUserPrompt,
 };

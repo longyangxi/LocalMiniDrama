@@ -155,8 +155,8 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
 
   // ---- 创建 drama ----
   const dramaInfo = db.prepare(
-    `INSERT INTO dramas (title, description, genre, style, status, tags, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO dramas (title, description, genre, style, status, tags, metadata, story_bible, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     title,
     d.description || null,
@@ -165,6 +165,7 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
     d.status || 'draft',
     d.tags || null,
     metaStr,
+    typeof d.story_bible === 'string' ? d.story_bible : (d.story_bible ? JSON.stringify(d.story_bible) : null),
     now,
     now
   );
@@ -194,9 +195,22 @@ function _doImport(db, storagePath, files, data, d, title, metaStr, now, log) {
   const episodeIdList = []; // 按顺序保存新集 id
   for (const ep of (data.episodes || [])) {
     const epInfo = db.prepare(
-      `INSERT INTO episodes (drama_id, episode_number, title, description, script_content, duration, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(dramaId, ep.episode_number || 1, ep.title || `第${ep.episode_number || 1}集`, ep.description || null, ep.script_content || null, ep.duration || 0, now, now);
+      `INSERT INTO episodes (drama_id, episode_number, title, description, script_content, duration, summary, beat_sheet, story_state, quality_report, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      dramaId,
+      ep.episode_number || 1,
+      ep.title || `第${ep.episode_number || 1}集`,
+      ep.description || null,
+      ep.script_content || null,
+      ep.duration || 0,
+      ep.summary || null,
+      typeof ep.beat_sheet === 'string' ? ep.beat_sheet : (ep.beat_sheet ? JSON.stringify(ep.beat_sheet) : null),
+      typeof ep.story_state === 'string' ? ep.story_state : (ep.story_state ? JSON.stringify(ep.story_state) : null),
+      typeof ep.quality_report === 'string' ? ep.quality_report : (ep.quality_report ? JSON.stringify(ep.quality_report) : null),
+      now,
+      now
+    );
     episodeIdList.push(epInfo.lastInsertRowid);
   }
 

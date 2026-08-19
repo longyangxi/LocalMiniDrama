@@ -124,6 +124,8 @@ function ensureAllColumns(database) {
     { name: 'description',    type: 'TEXT' },
     { name: 'beat_sheet',     type: 'TEXT' },   // JSON: 本集节拍表（hook/turn/peak/cliffhanger）
     { name: 'summary',        type: 'TEXT' },   // 本集剧情概要，供下一集接续与分镜对齐
+    { name: 'story_state',    type: 'TEXT' },   // JSON: 本集结束后的完整人物/关系/信息连续性状态
+    { name: 'quality_report', type: 'TEXT' },   // JSON: 自动总编剧评审摘要与修订记录
     { name: 'duration',       type: 'INTEGER DEFAULT 0' },
     { name: 'video_url',      type: 'TEXT' },
     { name: 'thumbnail',      type: 'TEXT' },

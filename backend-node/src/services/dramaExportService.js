@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
 
-const EXPORT_VERSION = '1.4';  // 1.4: 完整导出分镜图片历史（含首尾帧 first/last 绑定）、frame_prompts、layout_description 等，支持导入后恢复首尾帧模式数据
+const EXPORT_VERSION = '1.5';  // 1.5: 导出故事圣经、节拍表、跨集连续性状态与自动评审摘要
 
 function getStoragePath(cfg) {
   const raw = cfg?.storage?.local_path || './data/storage';
@@ -211,6 +211,7 @@ function exportDrama(db, cfg, log, dramaId) {
       status: drama.status,
       tags: drama.tags,
       metadata,
+      story_bible: drama.story_bible || null,
     },
     episodes: episodes.map(ep => {
       const sbs = storyboardsByEp[ep.id] || [];
@@ -219,6 +220,10 @@ function exportDrama(db, cfg, log, dramaId) {
         title: ep.title,
         description: ep.description,
         script_content: ep.script_content,
+        summary: ep.summary || null,
+        beat_sheet: ep.beat_sheet || null,
+        story_state: ep.story_state || null,
+        quality_report: ep.quality_report || null,
         duration: ep.duration,
         storyboards: sbs.map(sb => {
           const igsForThis = allImagesBySb[sb.id] || [];

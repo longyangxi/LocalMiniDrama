@@ -29,6 +29,10 @@ function clearOverrideInMemory(key) {
   delete _overrideCache[key];
 }
 
+function getOverrideInMemory(key) {
+  return _overrideCache[key] || null;
+}
+
 // 与 Go application/services/prompt_i18n.go 对齐：提示词与语言
 function getLanguage(cfg) {
   return (cfg?.app?.language || 'zh').toLowerCase();
@@ -942,6 +946,14 @@ function buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount) 
  */
 function getDefaultPromptBody(key) {
   switch (key) {
+    case 'story_bible_system':
+      return '你是一位短剧总编剧。先从用户梗概中提炼独特的创作立场与人物矛盾，再搭建 ${n} 集共用的故事圣经。避免用失忆、巧合、空降身份和纯恶反派代替人物选择。可拍性只作为预算边界，不得抹平故事最重要的情感与道德冲突。';
+    case 'story_beat_sheet_system':
+      return '你是一位短剧责编。依据故事圣经排出 ${n} 集节拍。每集必须由人物主动选择推动，并造成不可撤销的价值变化；反转只有改变人物选择时才成立。全剧应有强弱呼吸，不得机械复制同一种钩子、争吵和卡点。';
+    case 'story_episode_system':
+      return '你是本剧的执笔编剧。不得改变节拍表的主要事实和顺序，但允许增加服务于人物、潜台词与情绪递进的微节拍。对白写表面意图，动作泄露真实意图；让高潮来自选择及代价，而不是空降信息。';
+    case 'story_polish_system':
+      return '你是本剧的总编剧兼连续性编辑。评审单集初稿并做克制的定向修订：保留已成立的个性和情节，只修复最影响人物主动性、因果、潜台词、情感代价、原创性和连续性的地方，同时输出本集结束后的完整连续性状态。';
     case 'story_expansion_system':
       return '你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。\n\n要求：\n1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。\n2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。\n3. 每集约 800 字。如有多集，剧情必须前后衔接——每集从上一集结尾处推进，确保整体故事连贯。\n4. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。';
 
@@ -979,6 +991,14 @@ function getDefaultPromptBody(key) {
  */
 function getLockedSuffix(key) {
   switch (key) {
+    case 'story_bible_system':
+      return '\n\n锁定输出：只返回包含主题、人物内在矛盾、关系弧、意象和制作边界的 JSON 故事圣经。';
+    case 'story_beat_sheet_system':
+      return '\n\n锁定输出：只返回指定集数的 JSON 节拍数组；每集包含 hook、cliffhanger、beats 和状态变化。';
+    case 'story_episode_system':
+      return '\n\n锁定输出：只返回单集中文剧本纯文本，不要 JSON、markdown 或解释。';
+    case 'story_polish_system':
+      return '\n\n锁定输出：只返回 JSON 对象，包含 revised_script、quality_report、continuity_state。';
     case 'story_expansion_system':
       return null;
     case 'storyboard_system':
@@ -1590,6 +1610,7 @@ module.exports = {
   loadOverridesIntoCache,
   setOverrideInMemory,
   clearOverrideInMemory,
+  getOverrideInMemory,
   getDefaultPromptBody,
   getLockedSuffix,
   getRegenerateLayoutDescriptionPrompt,

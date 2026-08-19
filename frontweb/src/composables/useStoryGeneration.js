@@ -14,6 +14,7 @@ export async function runGenerateStoryFromPremise({
   storyStyle,
   storyType,
   storyEpisodeCount,
+  creativePreferences,
   scriptTitle,
   generationStyle,
   customStylePrompt,
@@ -52,6 +53,7 @@ export async function runGenerateStoryFromPremise({
           ...stylePromptMetadataForSave(generationStyle, customStylePrompt),
           story_style: storyStyle || undefined,
           aspect_ratio: projectAspectRatio || '16:9',
+          creative_preferences: creativePreferences || {},
         },
       })
       store.setDrama(drama)
@@ -80,6 +82,8 @@ export async function runGenerateStoryFromPremise({
         style: storyStyle || undefined,
         type: storyType || undefined,
         episode_count: storyEpisodeCount || 1,
+        creative_preferences: creativePreferences || {},
+        auto_polish: true,
         title: scriptTitle || undefined,
         summary: text,
         genre: storyType || undefined,
@@ -88,6 +92,7 @@ export async function runGenerateStoryFromPremise({
           ...stylePromptMetadataForSave(generationStyle, customStylePrompt),
           story_style: storyStyle || undefined,
           aspect_ratio: projectAspectRatio || '16:9',
+          creative_preferences: creativePreferences || {},
         },
       })
 

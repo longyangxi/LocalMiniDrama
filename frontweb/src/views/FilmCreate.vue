@@ -231,6 +231,81 @@
                     导入小说
                   </el-button>
                 </div>
+                <details class="creative-preferences">
+                  <summary>
+                    <span>创作偏好</span>
+                    <small>可选 · 留空也能直接生成</small>
+                  </summary>
+                  <div class="creative-preferences__body">
+                    <div class="creative-preference-field">
+                      <span class="creative-preference-label">希望观众主要感受到</span>
+                      <el-radio-group v-model="storyPrimaryEmotion" size="small" @change="() => saveProjectSettings(false)">
+                        <el-radio-button value="">不限定</el-radio-button>
+                        <el-radio-button value="爽感">爽感</el-radio-button>
+                        <el-radio-button value="心痛">心痛</el-radio-button>
+                        <el-radio-button value="甜蜜">甜蜜</el-radio-button>
+                        <el-radio-button value="悬疑">悬疑</el-radio-button>
+                        <el-radio-button value="温暖">温暖</el-radio-button>
+                        <el-radio-button value="荒诞">荒诞</el-radio-button>
+                      </el-radio-group>
+                    </div>
+                    <div class="creative-preference-field">
+                      <span class="creative-preference-label">结局余味</span>
+                      <el-radio-group v-model="storyEndingFlavor" size="small" @change="() => saveProjectSettings(false)">
+                        <el-radio-button value="">不限定</el-radio-button>
+                        <el-radio-button value="圆满">圆满</el-radio-button>
+                        <el-radio-button value="反转">反转</el-radio-button>
+                        <el-radio-button value="遗憾">遗憾</el-radio-button>
+                        <el-radio-button value="开放">开放</el-radio-button>
+                      </el-radio-group>
+                    </div>
+                    <div class="creative-preference-field creative-preference-field--wide">
+                      <span class="creative-preference-label">不想出现</span>
+                      <el-input
+                        v-model="storyAvoid"
+                        maxlength="160"
+                        show-word-limit
+                        placeholder="例如：失忆、靠巧合解决、脸谱化反派（可不填）"
+                        @blur="() => saveProjectSettings(false)"
+                      />
+                    </div>
+                  </div>
+                </details>
+                <details v-if="store.drama?.story_bible" class="story-soul-card">
+                  <summary>
+                    <span>本剧创作内核</span>
+                    <small>AI 已在后台用于保持人物与主题一致</small>
+                  </summary>
+                  <div class="story-soul-card__body">
+                    <div v-if="store.drama.story_bible.theme_question" class="story-soul-lead">
+                      {{ store.drama.story_bible.theme_question }}
+                    </div>
+                    <div class="story-soul-grid">
+                      <div v-if="store.drama.story_bible.emotional_promise">
+                        <span>情感承诺</span>
+                        <p>{{ store.drama.story_bible.emotional_promise }}</p>
+                      </div>
+                      <div v-if="store.drama.story_bible.ending_truth">
+                        <span>结局落点</span>
+                        <p>{{ store.drama.story_bible.ending_truth }}</p>
+                      </div>
+                    </div>
+                    <div v-if="store.drama.story_bible.characters?.length" class="story-soul-characters">
+                      <article v-for="character in store.drama.story_bible.characters.slice(0, 4)" :key="character.name">
+                        <strong>{{ character.name }}</strong>
+                        <p>{{ character.want }}<template v-if="character.need">，但真正需要的是{{ character.need }}</template></p>
+                      </article>
+                    </div>
+                    <div v-if="store.currentEpisode?.beat_sheet?.value_change" class="story-polish-note story-polish-note--beat">
+                      <span>本集价值变化</span>
+                      {{ store.currentEpisode.beat_sheet.value_change }}
+                    </div>
+                    <div v-if="store.currentEpisode?.quality_report?.summary" class="story-polish-note">
+                      <span>本集自动打磨</span>
+                      {{ store.currentEpisode.quality_report.summary }}
+                    </div>
+                  </div>
+                </details>
               </div>
               <div class="script-sub-divider" />
               <div id="anchor-script" class="script-sub-block">
@@ -2877,6 +2952,9 @@ const storyInput = ref('')
 const storyStyle = ref('')
 const storyType = ref('')
 const storyEpisodeCount = ref(1)
+const storyPrimaryEmotion = ref('')
+const storyEndingFlavor = ref('')
+const storyAvoid = ref('')
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
@@ -4781,6 +4859,9 @@ async function loadDrama() {
     storyInput.value = (d.description || '').toString().trim()
     storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
     storyType.value = d.genre || ''
+    storyPrimaryEmotion.value = d.metadata?.creative_preferences?.primary_emotion || ''
+    storyEndingFlavor.value = d.metadata?.creative_preferences?.ending_flavor || ''
+    storyAvoid.value = d.metadata?.creative_preferences?.avoid || ''
     generationStyle.value = d.style || ''
     if ((d.style || '') === CUSTOM_STYLE_VALUE) {
       customStylePrompt.value = (d.metadata?.style_prompt_zh || d.metadata?.style_prompt_en || '').toString()
@@ -5200,6 +5281,11 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
     last_frame_use_first_layout_lock: !!lastFrameUseFirstLayoutLock.value,
     storyboard_keep_costume_lock: !!storyboardKeepCostumeLock.value,
+    creative_preferences: {
+      primary_emotion: storyPrimaryEmotion.value || '',
+      ending_flavor: storyEndingFlavor.value || '',
+      avoid: storyAvoid.value?.trim() || '',
+    },
   }
   if (includeGenerationStyle) {
     Object.assign(metadata, projectStylePromptMetadata())
@@ -5221,6 +5307,11 @@ async function onGenerateStory() {
     storyStyle: storyStyle.value,
     storyType: storyType.value,
     storyEpisodeCount: storyEpisodeCount.value,
+    creativePreferences: {
+      primary_emotion: storyPrimaryEmotion.value || '',
+      ending_flavor: storyEndingFlavor.value || '',
+      avoid: storyAvoid.value?.trim() || '',
+    },
     scriptTitle: scriptTitle.value,
     generationStyle: generationStyle.value,
     customStylePrompt: customStylePrompt.value,
@@ -8471,6 +8562,9 @@ function applyRouteToStore() {
     savedCurrentEpisodeNumber.value = 1
     storyStyle.value = ''
     storyType.value = ''
+    storyPrimaryEmotion.value = ''
+    storyEndingFlavor.value = ''
+    storyAvoid.value = ''
     scriptLanguage.value = 'zh'
     scriptStoryboardStyle.value = ''
     generationStyle.value = ''
@@ -11127,5 +11221,113 @@ html.light .frame-layout-anchor {
   color: #64748b;
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* 渐进式创作控制：默认折叠，保留“一句话生成”的轻量入口 */
+.creative-preferences,
+.story-soul-card {
+  margin-top: 12px;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-card, #111827) 92%, #c79a52 8%);
+  overflow: hidden;
+}
+.creative-preferences > summary,
+.story-soul-card > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 13px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary, #e5e7eb);
+}
+.creative-preferences > summary::-webkit-details-marker,
+.story-soul-card > summary::-webkit-details-marker { display: none; }
+.creative-preferences > summary::before,
+.story-soul-card > summary::before {
+  content: '＋';
+  color: #c79a52;
+  font-weight: 400;
+}
+.creative-preferences[open] > summary::before,
+.story-soul-card[open] > summary::before { content: '−'; }
+.creative-preferences summary small,
+.story-soul-card summary small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary, #94a3b8);
+}
+.creative-preferences__body,
+.story-soul-card__body {
+  padding: 2px 13px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color, #334155) 75%, transparent);
+}
+.creative-preferences__body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px 18px;
+  padding-top: 13px;
+}
+.creative-preference-field { display: grid; gap: 7px; }
+.creative-preference-field--wide { grid-column: 1 / -1; }
+.creative-preference-label {
+  font-size: 12px;
+  color: var(--text-secondary, #a8b0bf);
+}
+.story-soul-card { border-color: color-mix(in srgb, #c79a52 48%, var(--border-color, #334155)); }
+.story-soul-card__body { padding-top: 13px; }
+.story-soul-lead {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--text-primary, #f3f4f6);
+  padding-left: 12px;
+  border-left: 2px solid #c79a52;
+}
+.story-soul-grid,
+.story-soul-characters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.story-soul-grid > div,
+.story-soul-characters article {
+  padding: 10px 11px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-card, #111827) 85%, #c79a52 15%);
+}
+.story-soul-grid span {
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: #c79a52;
+}
+.story-soul-grid p,
+.story-soul-characters p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #b8c0cc);
+}
+.story-soul-characters strong { font-size: 12px; color: var(--text-primary, #f3f4f6); }
+.story-polish-note {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #b8c0cc);
+  background: color-mix(in srgb, #2f855a 13%, var(--bg-card, #111827));
+}
+.story-polish-note span { color: #68d391; font-weight: 650; margin-right: 6px; }
+.story-polish-note--beat { background: color-mix(in srgb, #c79a52 12%, var(--bg-card, #111827)); }
+.story-polish-note--beat span { color: #c79a52; }
+@media (max-width: 900px) {
+  .creative-preferences__body,
+  .story-soul-grid,
+  .story-soul-characters { grid-template-columns: 1fr; }
 }
 </style>
