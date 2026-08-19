@@ -110,6 +110,38 @@
         >
           AI 生成分镜
         </el-button>
+        <el-tooltip placement="bottom" :show-after="200">
+          <template #content>
+            <div style="max-width:320px;line-height:1.7">
+              先为每镜合成对白/旁白 TTS（已有则复用），按<b>真实语音时长</b>重排镜头时长。<br/>
+              台词装不下的镜头在后期只能靠变速把配音压进去，是成片一听就假的主因。建议在批量生视频前跑一次。
+            </div>
+          </template>
+          <el-button
+            size="small"
+            :loading="episodeGenerating"
+            :disabled="!filterEpisodeId || workflowRunning"
+            @click="planEpisodeDurations"
+          >
+            对齐时长
+          </el-button>
+        </el-tooltip>
+        <el-tooltip placement="bottom" :show-after="200">
+          <template #content>
+            <div style="max-width:320px;line-height:1.7">
+              拿到整集镜头序列后统一分配<b>景别 / 角度 / 运镜 / 灯光 / 景深</b>并重建视频提示词。<br/>
+              只有看得到全集，才能落实「禁止连续 3 镜同景别」「对话正反打」这些节奏规则。动作与台词不会被改动。
+            </div>
+          </template>
+          <el-button
+            size="small"
+            :loading="episodeGenerating"
+            :disabled="!filterEpisodeId || workflowRunning"
+            @click="designEpisodeVisuals"
+          >
+            视觉设计
+          </el-button>
+        </el-tooltip>
         <el-button
           size="small"
           :loading="episodeGenerating"
@@ -622,6 +654,8 @@ const {
   episodeGenerating,
   episodeGenProgress,
   aiGenerateStoryboards,
+  planEpisodeDurations,
+  designEpisodeVisuals,
   batchGenerateImages,
   batchGenerateVideos,
 } = useCanvasEpisodeGenerate({

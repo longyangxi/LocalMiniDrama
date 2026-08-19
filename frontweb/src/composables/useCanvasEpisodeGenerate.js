@@ -150,6 +150,76 @@ export function useCanvasEpisodeGenerate(deps) {
     }
   }
 
+  /**
+   * 音频先行：按台词/旁白的真实语音时长重排整集镜头时长。
+   * 台词装不下的镜头在后期只能靠变速把配音压进去，是成片一听就假的主因。
+   */
+  async function planEpisodeDurations() {
+    const ep = getEpisode()
+    if (!ep) {
+      ElMessage.warning('请先选择集数')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        '将按每镜台词/旁白的真实语音时长重排镜头时长。缺失配音的分镜会先自动合成 TTS（消耗 TTS 额度），已有配音则直接复用。',
+        '音频先行对齐时长',
+        { type: 'info', confirmButtonText: '开始对齐' }
+      )
+    } catch {
+      return
+    }
+    episodeGenerating.value = true
+    episodeGenProgress.value = '正在按人声时长重排镜头时长…'
+    try {
+      const res = await storyboardsAPI.planEpisodeDurations(ep.id, { synthesize: true })
+      await refreshCanvas(true)
+      ElMessage.success(res?.message || `已重排 ${res?.updated ?? 0} 条分镜时长`)
+      const splits = res?.splitSuggestions || []
+      if (splits.length > 0) {
+        ElMessage.warning(`${splits.length} 条分镜人声超过单镜上限，建议在列表模式用「按对白拆镜」拆开`)
+      }
+    } catch (e) {
+      ElMessage.error(e?.message || '时长对齐失败')
+    } finally {
+      episodeGenerating.value = false
+      episodeGenProgress.value = ''
+    }
+  }
+
+  /**
+   * 整集视觉设计：拿到全集镜头序列后统一分配景别/角度/运镜/光线/景深。
+   * 逐镜生成看不到后面还有什么，落实不了「禁止连续3镜同景别」「对话正反打」这类全局节奏规则。
+   */
+  async function designEpisodeVisuals() {
+    const ep = getEpisode()
+    if (!ep) {
+      ElMessage.warning('请先选择集数')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        '将根据整集镜头序列重新分配每个镜头的景别、机位角度、运镜、灯光与景深，并重建视频提示词。动作、台词、分段不会被改动。',
+        '重做整集视觉设计',
+        { type: 'info', confirmButtonText: '开始设计' }
+      )
+    } catch {
+      return
+    }
+    episodeGenerating.value = true
+    episodeGenProgress.value = '正在做整集视觉设计（景别 / 运镜 / 光线）…'
+    try {
+      const res = await storyboardsAPI.designEpisodeVisuals(ep.id, {})
+      await refreshCanvas(true)
+      ElMessage.success(res?.message || `已重做 ${res?.updated ?? 0} 个镜头的视觉设计`)
+    } catch (e) {
+      ElMessage.error(e?.message || '视觉设计失败')
+    } finally {
+      episodeGenerating.value = false
+      episodeGenProgress.value = ''
+    }
+  }
+
   async function batchGenerateImages() {
     const ep = getEpisode()
     if (!ep) {
@@ -254,6 +324,8 @@ export function useCanvasEpisodeGenerate(deps) {
     episodeGenerating,
     episodeGenProgress,
     aiGenerateStoryboards,
+    planEpisodeDurations,
+    designEpisodeVisuals,
     batchGenerateImages,
     batchGenerateVideos,
   }

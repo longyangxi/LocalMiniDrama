@@ -23,6 +23,57 @@ storage:
 # 异步视频任务轮询总超时（分钟）；省略或 ≤0 时默认 30
 video:
   generation_timeout_minutes: 30
+  # 音频先行：镜头时长会先按台词/旁白的真实语音时长规划，再向上贴合到这里的档位。
+  # 台词装不下的镜头会被拉长而不是把配音压成「机器人加速」。
+  duration_ladder: [5, 6, 8, 10, 12, 15]
+  # 段落转场：段内保持硬切（短剧节奏靠密集硬切），只在 segment 边界加转场。
+  #   mode: none 关闭（纯 concat 流拷贝，最快）
+  #         auto 换地点用黑场、同地点用叠化（推荐）
+  #         也可固定为 dissolve / fadeblack / fadewhite / wipeleft / slideleft / circleopen 等
+  # 注意：开启转场时段间需要重编码，整集合成会比纯硬切慢一些。
+  transition:
+    mode: auto
+    duration_seconds: 0.5
+  # BGM 铺底：走本地曲库，把有版权的音乐按情绪放进 storage/bgm/<情绪>/ 即可。
+  # 情绪目录：tense 紧张 / suspense 悬疑 / sad 悲伤 / warm 温情 / uplift 高昂 / neutral 中性。
+  # 选曲按剧情段落（segment）而非逐镜，段落之间交叉淡入淡出。
+  # duck = 有对白/旁白时自动压低音乐（sidechain ducking），这是让配乐不盖住台词的关键。
+  # 曲库为空时静默跳过，不影响合成。
+  bgm:
+    enabled: true
+    volume: 0.28
+    duck: true
+    # 闪避强度（可不填）。默认值实测在对白窗口把 BGM 压低约 10dB，
+    # 落在广播配乐常用的 8–12dB 区间：再轻听不出让路，再重会有明显「泵感」。
+    duck_threshold: 0.015
+    duck_ratio: 12
+    duck_release_ms: 500
+  # 成片色彩统一：各镜由 AI 独立生成，色温/对比度会逐镜漂移。
+  #   preset: none 不调色 / neutral 轻度归一（推荐）/ film 电影感 / warm 暖调 / cool 冷调
+  #           / teal_orange 青橙 / bleach 低饱和高对比
+  #   lut_file: 提供 .cube 文件时以它为准，忽略 preset
+  color_grade:
+    preset: neutral
+    lut_file: ''
+
+# 分镜生成
+storyboard:
+  # 两段式分镜：第一段只拆叙事，第二段拿到整集序列再统一设计景别/角度/运镜/光线/景深。
+  # 关掉则退回一次调用同时输出全部字段（质量明显更差，不建议）。
+  two_pass_visual_design: true
+  # 高级运镜（希区柯克变焦/子弹时间/环绕/螺旋等）。
+  # 默认关闭：这些恰恰是 AI 视频模型最容易崩的镜头，开启后废片率会显著上升。
+  allow_advanced_camera_movement: false
+
+image:
+  # 首/尾/关键帧质检闸门：用视觉模型检查角色一致性、时代穿帮、肢体畸变、宫格拼贴，
+  # 低于 min_score 时带着针对性修正指令自动重排，最多 max_retries 次。
+  # 一次质检调用的成本远低于一条废视频。
+  quality_gate:
+    enabled: true
+    min_score: 70
+    max_retries: 2
+    # model: 留空则用默认文本模型（需支持视觉输入）
 ai:
   default_text_provider: openai
   default_image_provider: openai
@@ -36,6 +87,9 @@ style:
   default_video_ratio: '16:9'
   default_prop_ratio: '1:1'
   default_image_size: 1024x1024
+  # 图片提示词语种：auto 按实际调用的图片模型决定（即梦/通义/Seedream 走中文，
+  # Imagen/DALL·E/Flux 等走英文）；也可强制 zh 或 en。
+  image_prompt_language: auto
 vendor_lock:
   enabled: false
   config_file: ai-configs-qudao.json

@@ -7,6 +7,9 @@ const safeJson = require('../utils/safeJson');
 const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extractFirstArray } = safeJson;
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
+const { charSpeechWeight, parseDialogueToEntries, inferPrimaryOnScreenCharacter } = require('./speechTiming');
+const shotDurationPlanner = require('./shotDurationPlanner');
+const cameraMovement = require('../constants/cameraMovement');
 
 /**
  * 分镜专用 generateText 包装：
@@ -161,33 +164,21 @@ function lightingStyleHintZh(code) {
   return m[String(code || '').trim()] || '主光方向明确侧光或窗光';
 }
 
-/** 按时长与已有运镜字段拼灵境式「运镜链」（至少两步，强调摄影机在动） */
+/**
+ * 单一运镜描述。
+ *
+ * 旧实现会拼出「定镜1秒建立空间，缓推轨贴近动作核心，横移从门框一侧滑出…」这样的多步运镜链。
+ * 5-15 秒的 AI 片段执行不了运镜链，实测结果是画面糊成一团，因此改为只给一个明确的运镜，
+ * 并按时长补一句幅度描述（长镜头幅度更缓）。
+ */
 function buildCameraMotionChain(movement, shotType, durationSec) {
   const dur = Math.max(1, Number(durationSec) || 5);
-  const mv = String(movement || '').trim();
-  const st = String(shotType || '').trim();
-  const parts = [];
-  if (dur >= 12) {
-    parts.push('定镜约1秒建立空间');
-    if (/跟|追随|尾随/.test(mv)) parts.push('侧后方跟拍主体位移');
-    else if (/摇/.test(mv)) parts.push(`${mv || '轻摇'}拓展画幅信息`);
-    else parts.push('缓推轨贴近动作核心');
-    parts.push('横移从前景遮挡或门框一侧滑出拓宽视野带出纵深与环境细节');
-  } else if (dur >= 8) {
-    parts.push('定镜');
-    parts.push(mv && !/^固定|^定镜/.test(mv) ? mv : '缓推轨由远及近');
-    parts.push('微横移或轻摇让背景纵深与环境细节可读');
-  } else if (dur >= 5) {
-    parts.push('定镜起幅');
-    parts.push(mv || '缓推轨或短跟拍强化动线');
-  } else {
-    parts.push(mv || '短跟拍或微推');
+  const mv = cameraMovement.normalizeMovement(movement);
+  if (mv.code === 'static') {
+    return '固定机位，机位全程不动，靠人物动作与表情承担画面变化';
   }
-  if ((st.includes('远') || st.includes('全景')) && !parts.some((p) => /推|移|跟|摇/.test(p))) {
-    parts.push('缓推轨向事件中心');
-  }
-  const chain = [...new Set(parts)].filter(Boolean).join('，');
-  return chain || '定镜，缓推轨';
+  const amplitude = dur >= 10 ? '幅度极缓、全程匀速' : dur >= 6 ? '幅度平缓、匀速' : '幅度小而克制';
+  return `${mv.zh}，${amplitude}，全程只有这一个运镜，不叠加其它机位运动`;
 }
 
 /** 全能分镜：模型未返回 universal_segment_text 时的灵境式高密度单行（视频时间轴 + 运镜链） */
@@ -383,7 +374,10 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const shotNumber = normalizeStoryboardShotNumber(sb);
   const title = sb.title ?? '';
   const shotType = sb.shot_type ?? '';
-  const movement = sb.movement ?? sb.camera_movement ?? '';
+  // 运镜白名单：模型仍可能吐出「先推再环绕」这类复合链或高级运镜，
+  // 统一归一化为可稳定生成的单一运镜，高级项按配置降级。
+  const movementNorm = cameraMovement.normalizeMovement(sb.movement ?? sb.camera_movement ?? '', opts.cfg);
+  const movement = movementNorm.zh;
   const angle = angleValFn(sb);
   const action = sb.action ?? '';
   const dialogue = sb.dialogue ?? '';
@@ -394,7 +388,13 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const segmentTitle = sb.segment_title ?? null;
   const lightingStyle = sb.lighting_style ?? null;
   const depthOfField = sb.depth_of_field ?? null;
-  let durationSec = normalizeDuration(sb.duration) || 5;
+  // 音频先行：镜头时长必须先装得下台词/旁白，再考虑模型给的值与用户设定的目标时长。
+  // 台词 20 字塞进 5 秒，后面只能靠 atempo 把配音压成「机器人加速」，是成片一听就假的主因。
+  const speechPlan = shotDurationPlanner.planShotDuration(
+    { dialogue, narration, action, duration: normalizeDuration(sb.duration) || 0 },
+    { ladder: opts.durationLadder }
+  );
+  let durationSec = Math.max(normalizeDuration(sb.duration) || 5, speechPlan.duration);
   const targetClip = opts.targetClipDuration != null ? Number(opts.targetClipDuration) : 0;
   if (Number.isFinite(targetClip) && targetClip > 0) {
     durationSec = Math.max(durationSec, Math.round(targetClip));
@@ -624,6 +624,10 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
   const style = (styleOverride && String(styleOverride).trim()) || cfg?.style?.default_style || '';
   const videoRatio = cfg?.style?.default_video_ratio || '16:9';
   const now = new Date().toISOString();
+  // 运镜白名单/时长档位需要 cfg；调用方未带时在这里补上
+  if (deriveOpts && !deriveOpts.cfg) {
+    deriveOpts = { ...deriveOpts, cfg, durationLadder: shotDurationPlanner.resolveDurationLadder(cfg) };
+  }
 
   // 仅在非增量模式下才删除旧数据（增量模式时已在流式开始前删除）
   if (skipShotNumbers === null) {
@@ -849,6 +853,9 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
   const deriveOpts = {
     universalOmni: !!universalOmni,
     targetClipDuration: targetClipDurationSec != null && Number(targetClipDurationSec) > 0 ? Number(targetClipDurationSec) : null,
+    // 运镜白名单与时长档位都要读配置
+    cfg,
+    durationLadder: shotDurationPlanner.resolveDurationLadder(cfg),
   };
   let streamThrottle = 0;
 
@@ -1058,12 +1065,36 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     db.prepare('UPDATE episodes SET duration = ?, updated_at = ? WHERE id = ?').run(durationMinutes, new Date().toISOString(), Number(episodeId));
     log.info('Episode duration updated', { episode_id: episodeId, duration_seconds: totalDuration, duration_minutes: durationMinutes });
 
+    // ── 第二段：视觉设计通道 ────────────────────────────────────────
+    // 第一段只管叙事（流式增量保存，看不到自己后面还有什么镜头）。
+    // 这里拿到整集已排好的序列再统一设计景别/角度/运镜/光线/景深，
+    // 才有可能落实「禁止连续3镜同景别」「对话正反打」「段落开合」这类全局节奏规则。
+    let visualDesignResult = null;
+    if (cfg?.storyboard?.two_pass_visual_design !== false && !universalOmni && saved.length > 0) {
+      try {
+        taskService.updateTaskStatus(db, taskId, 'processing', 85, '正在做整集视觉设计（景别 / 运镜 / 光线）...');
+        const shotVisualDesignService = require('./shotVisualDesignService');
+        visualDesignResult = await shotVisualDesignService.designEpisodeVisuals(db, log, episodeIdNum, {
+          cfg, model: model || undefined,
+        });
+      } catch (visualErr) {
+        log.warn('[分镜] 视觉设计通道失败，保留第一段结果', { task_id: taskId, error: visualErr.message });
+      }
+    }
+
+    const finalBoards = visualDesignResult && visualDesignResult.updated > 0
+      ? getStoryboardsForEpisode(db, episodeIdNum)
+      : saved;
+
     const resultData = {
-      storyboards: saved,
-      total: saved.length,
+      storyboards: finalBoards,
+      total: finalBoards.length,
       total_duration: totalDuration,
       duration_minutes: durationMinutes,
       truncated: parseMeta.truncated || false,
+      visual_design: visualDesignResult
+        ? { updated: visualDesignResult.updated, static_ratio: visualDesignResult.staticRatio }
+        : null,
     };
     taskService.updateTaskResult(db, taskId, resultData);
     log.info('Storyboard generation completed', { task_id: taskId, episode_id: episodeId });
@@ -1099,14 +1130,14 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
 function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
   const cfg = loadConfig();
   const episode = db.prepare(
-    'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
+    'SELECT id, script_content, description, drama_id, beat_sheet FROM episodes WHERE id = ? AND deleted_at IS NULL'
   ).get(Number(episodeId));
   if (!episode) {
     throw new Error('剧集不存在或无权限访问');
   }
 
   // 获取剧集风格和比例（如果未指定，则从 drama metadata / style 中获取完整提示词）
-  const drama = db.prepare('SELECT style, metadata FROM dramas WHERE id = ?').get(episode.drama_id);
+  const drama = db.prepare('SELECT style, metadata, story_bible FROM dramas WHERE id = ?').get(episode.drama_id);
   const { resolvedStreamStyleFromDrama } = require('../utils/dramaStyleMerge');
   const finalStyle = resolvedStreamStyleFromDrama(style, drama);
 
@@ -1228,8 +1259,38 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   const propConstraint = promptI18n.formatUserPrompt(cfg, 'prop_constraint');
   const suffix = promptI18n.getStoryboardUserPromptSuffix(cfg, effectiveShotDuration);
 
+  // 故事圣经 + 本集节拍表：给分镜阶段一个跨集不变量，避免人设/时代/场景在分镜里漂移，
+  // 同时让镜头能对齐剧本阶段就排好的节拍，而不是从正文里重新瞎猜。
+  let storyContextBlock = '';
+  try {
+    const craft = require('./storyCraftPrompts');
+    const isEnLang = promptI18n.isEnglish(cfg);
+    if (drama?.story_bible) {
+      const bible = typeof drama.story_bible === 'string' ? JSON.parse(drama.story_bible) : drama.story_bible;
+      const digest = craft.buildBibleDigest(bible, isEnLang);
+      if (digest) {
+        storyContextBlock += isEnLang
+          ? `SERIES BIBLE (must not be contradicted):\n${digest}\n\n`
+          : `【全剧设定（分镜不得与之矛盾）】\n${digest}\n\n`;
+      }
+    }
+    if (episode?.beat_sheet) {
+      const beats = typeof episode.beat_sheet === 'string' ? JSON.parse(episode.beat_sheet) : episode.beat_sheet;
+      if (beats && (beats.hook || Array.isArray(beats.beats))) {
+        const beatLines = (Array.isArray(beats.beats) ? beats.beats : [])
+          .map((b) => `  ${b.beat}. [${b.type || 'beat'}] ${b.content || ''}`)
+          .join('\n');
+        storyContextBlock += isEnLang
+          ? `BEAT SHEET FOR THIS EPISODE (align shot grouping to these beats; segment_title should echo them):\nHook: ${beats.hook || ''}\n${beatLines}\nCliffhanger: ${beats.cliffhanger || ''}\n\n`
+          : `【本集节拍表（分镜的段落划分请对齐这些节拍，segment_title 应与节拍呼应）】\n钩子：${beats.hook || ''}\n${beatLines}\n卡点：${beats.cliffhanger || ''}\n\n`;
+      }
+    }
+  } catch (err) {
+    log.warn('[分镜] 故事圣经/节拍表解析失败，按纯剧本生成', { error: err.message });
+  }
+
   let userPrompt =
-    `${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}`;
+    `${storyContextBlock}${scriptLabel}\n${scriptContent}\n\n${taskLabel}\n${taskInstruction}${extraConstraint}\n\n${charListLabel}\n${characterList}\n\n${charConstraint}\n\n${sceneListLabel}\n${sceneList}\n\n${sceneConstraint}\n\n${propListLabel}\n${propList}\n\n${propConstraint}\n\n${suffix}`;
 
   const wantNarration = includeNarration === true || includeNarration === 1 || String(includeNarration).toLowerCase() === 'true';
   if (wantNarration) {
@@ -1411,9 +1472,11 @@ function copyStoryboardAssetLinks(db, fromSbId, toSbId) {
 }
 
 function durationForSplitSegment(type, text) {
-  const w = charSpeechWeight(text);
-  if (type === 'narration') return Math.min(12, Math.max(6, Math.round(w + 2)));
-  return Math.min(10, Math.max(5, Math.round(w)));
+  const speechSec = charSpeechWeight(text, type === 'narration' ? 'narration' : 'dialogue');
+  return shotDurationPlanner.planShotDuration(
+    type === 'narration' ? { narration: text } : { dialogue: text },
+    { measuredSpeechSec: speechSec }
+  ).duration;
 }
 
 function buildSplitPlansFromStoryboard(row) {

@@ -419,6 +419,16 @@ function saveFramePrompt(db, log, storyboardId, frameType, prompt, description, 
 }
 
 async function generateSingleFrame(db, log, cfg, sb, scene, characterNames, model, frameKind, sanitizeOpts = {}) {
+  // 图片提示词语种按将要调用的图片模型决定：国内模型走中文，Imagen/DALL·E 等走英文。
+  // 见 imagePromptLanguage；config.style.image_prompt_language 可强制 zh/en。
+  try {
+    const imagePromptLanguage = require('./imagePromptLanguage');
+    const lang = imagePromptLanguage.resolveImagePromptLang(db, cfg, { imageServiceType: 'storyboard_image' });
+    cfg = imagePromptLanguage.withImagePromptLang(cfg, lang);
+    log.info('[帧提示词] 目标语种', { frame_kind: frameKind, lang });
+  } catch (langErr) {
+    log.warn('[帧提示词] 语种解析失败，按项目语言生成', { error: langErr.message });
+  }
   const context = buildStoryboardContext(cfg, sb, scene, characterNames);
   const allowedCharNames = parseNamesFromAnchorLines(characterNames);
   const allDramaNames = sanitizeOpts.allDramaNames || allowedCharNames;

@@ -216,6 +216,10 @@ function setupRouter(cfg, db, log) {
   r.post('/episodes/:episode_id/props/extract', prop.extractProps);
   r.post('/episodes/:episode_id/characters/extract', stub.episodeCharactersExtract);
   r.get('/episodes/:episode_id/storyboards', storyboards.episodeStoryboardsGet);
+  // 音频先行：按台词/旁白真实时长重排整集镜头时长
+  r.post('/episodes/:episode_id/plan-durations', storyboards.planEpisodeDurations);
+  // 整集视觉设计（景别 / 角度 / 运镜 / 光线 / 景深）
+  r.post('/episodes/:episode_id/design-visuals', storyboards.designEpisodeVisuals);
   r.post('/episodes/:episode_id/finalize', drama.finalizeEpisode);
   r.get('/episodes/:episode_id/download', drama.downloadEpisodeVideo);
 
@@ -294,6 +298,9 @@ function setupRouter(cfg, db, log) {
   r.post('/storyboards/:id/regenerate-layout-description', storyboards.regenerateLayoutDescription);
   r.post('/storyboards/:id/rebuild-video-prompt', storyboards.rebuildVideoPrompt);
   r.post('/storyboards/:id/split-by-audio', storyboards.splitByAudio);
+  // 首帧多选一 + 帧质检
+  r.post('/storyboards/:id/frame-candidates', storyboards.frameCandidates);
+  r.post('/storyboards/frame-quality-check', storyboards.checkFrameQuality);
 
   // ---------- audio ----------
   r.post('/audio/extract', audio.extract);

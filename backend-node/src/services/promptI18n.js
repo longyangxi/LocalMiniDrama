@@ -1,6 +1,20 @@
 // 内存覆盖缓存：key => body（仅存可编辑部分，不含锁定的 JSON 格式要求）
 const _overrideCache = {};
 
+const cameraMovement = require('../constants/cameraMovement');
+
+/** 图片提示词的目标语种（可与项目语言不同，见 imagePromptLanguage） */
+function imagePromptLang(cfg) {
+  return require('./imagePromptLanguage').imagePromptLangOf(cfg);
+}
+
+/** 帧提示词输出语种指令 */
+function promptLangDirective(cfg) {
+  return imagePromptLang(cfg) === 'en'
+    ? '**必须全文英文**（目标图片模型对英文语义解析更准确）'
+    : '**必须全文中文**（目标图片模型对中文语义解析更准确；仅允许 realistic 这类必要风格专有名为英文单词）';
+}
+
 function loadOverridesIntoCache(overrides) {
   for (const o of overrides) {
     _overrideCache[o.key] = o.content;
@@ -90,6 +104,8 @@ Each element is a character object containing the above fields.`;
 }
 
 function getStoryboardSystemPrompt(cfg) {
+  const movementListZh = cameraMovement.allowedMovementList(cfg, 'zh').join('、');
+  const movementListEn = cameraMovement.allowedMovementList(cfg, 'en').join(', ');
   if (isEnglish(cfg)) {
     return `[Role] You are a senior film storyboard artist, proficient in Robert McKee's shot breakdown theory, skilled at building emotional rhythm.
 
@@ -108,29 +124,12 @@ function getStoryboardSystemPrompt(cfg) {
    - Close-Up (CU): Detail display, emotional expression
    - Extreme Close-Up (ECU): Key props, intense emotions
 
-3. **Camera Movement Requirements**（**Dynamic Priority Mandatory**）:
-   - 【Core Rule】: Every video segment MUST use **dynamic camera movement**. **Static/fixed shots shall not exceed 20%**. Prioritize push/pull/pan/tilt/track/crane/orbit/whip/roll/zoom.
-   - Basic movements:
-     * Push In: Forward approach, builds tension/intimacy
-     * Pull Out: Backward reveal, shows environment or emotional release
-     * Pan: Horizontal rotation, spatial reveal or lateral following
-     * Tilt: Vertical rotation, height reveal or emotional rise/fall
-     * Tracking/Follow: Camera follows subject, keeps subject framed
-     * Crane Up: Ascending boom, grandeur or liberation
-     * Crane Down: Descending boom, oppression or weight
-     * Orbit: 360° circling around subject,立体 spatial depth
-     * Handheld: Slight shake, realism/tension
-   - Advanced movements:
-     * Zoom: Optical zoom in/out without moving camera position
-     * Roll: Rotation along lens axis, vertigo or weightlessness
-     * Whip Pan: Rapid whip pan, temporal jump or chaos
-     * Spiral: Ascend/descend while orbiting, dreamlike or crushing
-   - Cinematic compound shots (use based on emotion):
-     * Hitchcock Zoom (hitchcock_zoom): Push + zoom out (or reverse), spatial distortion vertigo, expresses terror/disorientation
-     * Bullet Time (bullet_time): Orbit + slow-motion, subject ultra-slow, background spins fast, captures peak dramatic moment
-     * Dutch Angle + Move (dutch_angle_move): Tilted frame + pan/orbit, mental breakdown/world collapse
-     * Dolly + Track (dolly_track): Push + lateral move, complex emotional progression
-     * Slow-mo Orbit (slowmo_orbit): Slow-motion circling, time-freezing dramatic instant
+3. **Camera Movement (RESTRAINT IS THE RULE)**:
+   - Complex camera moves are exactly where current AI video models break: warped faces, melting limbs, tearing backgrounds. A usable AI short drama gets its energy from **editing rhythm and shot-size variation**, not from moving the camera inside a single shot.
+   - Choose ONLY from this whitelist: ${movementListEn}
+   - Default to \`static\` or a slow \`push\`. Reserve \`tracking\` / \`handheld\` for moments that genuinely need kinetic energy.
+   - One movement per shot. Never chain moves ("push then pan then orbit") — the model cannot execute a chain in 5-15s and will produce mush.
+   - The shot's emotional intensity should be carried by shot size, angle and lighting first; camera movement is the last resort, not the first.
 
 4. **Emotion & Intensity Markers**:
    - Emotion: Brief description (excited, sad, nervous, happy, etc.)
@@ -160,7 +159,7 @@ function getStoryboardSystemPrompt(cfg) {
    - time: Time of day (e.g., "morning", "dusk", "night", "afternoon")
    - shot_type: Shot type (extreme long shot/long shot/medium shot/close-up/extreme close-up)
    - camera_angle: Camera angle (eye-level/low-angle/high-angle/side/back)
-   - camera_movement: Camera movement — MUST be one of: static, push, pull, pan, tilt, tracking, crane_up, crane_dn, orbit, handheld, zoom, roll, whip_pan, spiral, hitchcock_zoom, bullet_time, dutch_angle_move, dolly_track, slowmo_orbit (prefer dynamic over static)
+   - camera_movement: Camera movement — MUST be one of the whitelisted codes above. When in doubt use \`static\` or \`push\`.
    - lighting_style: Lighting style — choose ONE: natural/front/side/backlit/top/under/soft/dramatic/golden_hour/blue_hour/night/neon
    - depth_of_field: Depth of field — choose ONE: extreme_shallow/shallow/medium/deep (close-up → shallow/extreme_shallow; wide shot → deep)
    - action: Action description
@@ -199,29 +198,12 @@ function getStoryboardSystemPrompt(cfg) {
    - 近景：细节展示、情绪表达
    - 特写：关键道具、强烈情绪
 
-3. **运镜要求**（**强制动态优先**）：
-   - 【运镜总原则】：每段视频必须使用**动态运镜**，**固定镜头不得超过20%**。优先选择推/拉/摇/跟/升/降/环绕/甩/旋转/变焦等运动镜头。
-   - 基础运镜：
-     * 推镜（push）：镜头向前推进，增强紧张/亲密感
-     * 拉镜（pull）：镜头向后拉开，揭示环境或情绪回落
-     * 横摇（pan）：水平旋转摄像机，展现空间或跟随横向动作
-     * 纵摇（tilt）：垂直旋转摄像机，展现高度或情绪起伏
-     * 跟镜/跟踪（tracking）：摄像机跟随主体移动，保持主体在画框内
-     * 升镜（crane_up）：吊臂上升，展现宏大或解放感
-     * 降镜（crane_dn）：吊臂下降，压迫或沉重感
-     * 环绕（orbit）：绕主体360°运动，展现立体空间
-     * 手持（handheld）：轻微晃动，增加真实/紧张感
-   - 进阶运镜：
-     * 变焦（zoom）：光学变焦推进或拉远，不移动机位
-     * 旋转/滚镜（roll）：镜头沿光轴旋转，制造眩晕/失重
-     * 甩镜（whip_pan）：快速急摇，制造时空跳转或混乱感
-     * 螺旋（spiral）：边升/降边环绕，梦幻或压迫感
-   - 电影化组合镜头（根据剧情情绪选用）：
-     * 希区柯克镜头（hitchcock_zoom）：向前推+变焦拉远（或反向），制造空间扭曲的眩晕感，表现惊恐/错乱
-     * 子弹时间（bullet_time）：环绕+升格（slow-motion），主体动作极缓，背景高速旋转，表现关键高能时刻
-     * 荷兰角+运镜（dutch_angle_move）：倾斜构图+横摇/环绕，表现精神错乱/世界崩塌
-     * 推轨复合（dolly_track）：推镜+横向移动，复杂情绪递进
-     * 升格环绕（slowmo_orbit）：慢动作环绕，时间凝固的戏剧性时刻
+3. **运镜要求（克制优先，这是铁律）**：
+   - 复杂运镜恰恰是当前 AI 视频模型最容易崩的地方：人物形变、糊脸、肢体融化、背景撕裂，几乎都发生在运动镜头上。**可用的 AI 短剧靠剪辑节奏和景别变化制造张力，不靠单个镜头内的复杂运镜。**
+   - 只能从以下白名单中选择：${movementListZh}
+   - **默认选 static（固定）或 push（缓推）**。只有确实需要动能的镜头才用 tracking（跟拍）/ handheld（手持）。
+   - **一个镜头只给一种运镜**。禁止写「先推再摇再环绕」这类复合运镜链——5-15 秒的片段里模型执行不了，只会糊成一团。
+   - 情绪强度优先用景别、机位角度和光线来表达；运镜是最后的手段，不是第一选择。
 
 4. **情绪与强度标记**：
    - emotion：简短描述（兴奋、悲伤、紧张、愉快等）
@@ -251,7 +233,7 @@ function getStoryboardSystemPrompt(cfg) {
    - time：拍摄时间（如"清晨"、"黄昏"、"夜晚"、"午后"）
    - shot_type：景别（大远景/远景/中景/近景/特写）
    - camera_angle：机位角度（平视/仰视/俯视/侧面/背面）
-   - camera_movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**
+   - camera_movement：运镜方式——**必须**填写上方白名单中的英文码（如 static / push / tracking），拿不准时一律填 static 或 push
    - lighting_style：灯光风格 — 从以下选一个填入：natural/front/side/backlit/top/under/soft/dramatic/golden_hour/blue_hour/night/neon（根据 time 和 atmosphere 判断；夜晚→night，黄昏→golden_hour，室内暖光→soft，强情绪→dramatic，逆光→backlit）
    - depth_of_field：景深 — 从以下选一个填入：extreme_shallow/shallow/medium/deep（特写/近景→shallow，中景→medium，远景/大远景→deep）
    - action：动作描述
@@ -489,11 +471,11 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 这是本分镜的**核心空间锚点 + 真实物体尺度 + 运镜呼吸空间**铁律，用于首帧/尾帧图片生成时在保持一致性的同时，为运镜留出必要空间（尤其是 Seedance 1.5 Pro 等依赖首尾帧的模型）：
 
 - 必须明确写出**主要角色在画面中的核心站位**（画面左/中/右三分、朝向、与关键道具的基本空间关系）。这是硬性锁定。
-- **必须同时写出所有主要道具的真实物理尺度与相对比例**（仅描述本分镜/剧本中实际出现的道具，尺度须符合其所属时代与场景；例如古代场景写案几高度、书卷尺寸、铜器体量等，现代场景写对应家具与小物件真实尺寸；所有道具均为次要环境元素）。严禁任何会导致AI把道具做大、立起或当成主导元素的描述；**严禁写入与时代背景不符的道具**（古代/古装分镜不得出现智能手机、遥控器、现代茶几等现代物品）。
+- **必须用相对参照写出主要道具的尺度与比例**（仅描述本分镜实际出现的道具，且符合其所属时代；例如「案几高度约到坐姿人物胸口」「书卷平放约前臂一半长」）。**不要写厘米数**——图像模型不理解绝对尺寸。所有道具都是次要环境元素，不占据画面主导。
 - 必须写明**整体构图方式和基本机位距离感**（中景、三分法等）。
 - **必须为 declared movement（运镜方式）预留电影化演化空间**：明确说明首尾帧在核心站位和真实尺度保持一致的前提下，允许根据 movement 进行自然的取景微调（例如：缓推时尾帧可比首帧稍紧；手持时允许轻微取景晃动与不完美平衡；横摇/跟拍时允许画面左右自然的进入/退出变化）。目标是让首尾帧既像“同一场同一空间的连续镜头”，又能真正支持运镜产生动态视频，而不是变成几乎定格的画面。
 - **严禁写入会导致比例失真或完全锁死运镜的表述**（即使剧本里有相关描述也禁止）："道具作为视觉焦点/占画面主导"、"手持晃动带来纪实感"、"完全相同的构图平衡"等。
-- 好示例（古代场景，带运镜空间）："主角坐画面左中榻上，是绝对视觉焦点；右下前景木质案几高约75cm，书卷平放于案面为正常尺寸，铜灯与茶具均为次要环境小物件，绝不可夸大；中景，三分法构图，核心平衡稳定。若 movement 为缓推，尾帧允许人物在画面中占比自然增加、背景稍被压缩；若为手持，允许轻微取景不完美偏移。"
+- 好示例（古代场景，带运镜空间）："主角坐画面左中榻上，是绝对视觉焦点；右下前景木质案几高度约到坐姿人物腰部，书卷平放于案面约前臂一半长，铜灯与茶具为次要小物件；中景，三分法构图。若 movement 为缓推，尾帧人物在画面中占比自然增加、背景稍被压缩；若为手持，允许轻微取景偏移。"
 - **执行原则**：首帧按此锚点生成初始画面；尾帧必须保持核心站位、角色与道具的真实尺度与基本空间关系，仅根据 movement 和 result 进行自然的取景演化。违背核心锁定 = 失败；完全没有运镜演化空间也属于不合格结果。
 
 **dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。
@@ -509,25 +491,17 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
  */
 function getRealisticPhysicalScaleContract(isEn) {
   if (isEn) {
-    return `【HIGHEST PRIORITY REALISTIC PHYSICAL SCALE & PROPORTION CONTRACT — ERA-AWARE, ABSOLUTE OVERRIDE】
-Every visible object in the scene MUST be rendered at 100% correct real-world physical dimensions for its era/setting, with correct relative proportions and accurate photographic perspective. This rule has HIGHER PRIORITY than any conflicting instruction in the layout_description / spatial anchor above.
-CRITICAL RULES:
-- **Era fidelity (MANDATORY)**: Props MUST match the story's time period and location. In ancient/historical/costume drama scenes, NEVER include smartphones, remote controls, modern coffee tables, A4 books, or any anachronistic modern items. Only describe props that actually belong in this shot according to the script and scene context.
-- **Scale only for props actually present**: For each major prop visible in the frame, state realistic size relative to the human figure and environment (e.g. ancient: writing desk ~70–85 cm, scroll ~25–35 cm; modern: side table ~38–52 cm, small handheld device lying flat at true size). Never invent props not in the shot.
-- **Secondary props**: The human character is the ONLY primary visual subject. All props are strictly secondary environmental elements — never oversized, never upright as dominant elements, never breaking perspective.
-- If layout_description contains scale-distorting phrases, IGNORE those implications and follow era-appropriate realistic scale and "secondary prop" rules above.
-This contract applies to BOTH first frame and last frame with zero exception.
-Violation (anachronistic props, oversized objects, broken perspective, props as dominant elements) = critical generation failure.`;
+    return `【OBJECT SCALE & VISUAL HIERARCHY】
+- **Describe scale relatively, never in centimetres.** Image models do not understand absolute dimensions, only reference relationships: write "desk height reaches the character's waist", "scroll about half a forearm long".
+- **Era-appropriate props only**: describe what actually exists in this shot and belongs to this period. Do NOT enumerate what must not appear — negations belong in the negative prompt; putting them in the positive prompt summons them.
+- **Clear hierarchy**: the character is the only primary subject. Props are secondary environmental elements that never dominate the frame, occlude the subject, or break perspective.
+- If the layout description above contains scale-distorting phrasing, follow the relative relationships in this section instead.`;
   }
-  return `【最高优先级真实物理尺度与道具比例铁律 — 时代自适应，绝对覆盖，违反即严重失败】
-本分镜内所有可见物体必须100%遵循其所属时代/场景的真实世界物理尺寸、正确相对比例和电影摄影透视法则。本铁律的优先级绝对高于上方布局描述中任何可能导致比例失真的表述。
-【关键规则（即使布局描述写得有问题也必须遵守）】
-- **时代一致性（强制）**：道具必须严格符合剧本设定的时代背景。古代/古装/架空历史场景中**严禁**出现智能手机、遥控器、现代茶几、A4书籍、平板等任何现代物品；只描述本分镜中实际存在且符合时代的道具。
-- **仅描述画面内实际道具的尺度**：对每个主要道具写出相对人体与环境的合理真实尺寸（例如古代：案几高约70-85cm、书卷长约25-35cm、铜镜直径约15-20cm；现代：边桌高约38-52cm等），不得凭空添加剧本未出现的道具。
-- **次要环境元素**：角色是画面中唯一的首要视觉主体和焦点；所有道具均为严格次要的小型环境元素，不得夸大、立起成为主导视觉、或破坏透视。
-- 若布局描述中有会导致不真实尺度的表述，必须忽略其对物体尺寸和透视的影响，只严格执行本铁律中符合时代的真实尺度与「次要道具」要求。
-本铁律同时适用于首帧和尾帧生成，零例外。
-任何生成结果出现时代错乱道具、物体过大失真、透视错误、道具成为主导元素，均视为严重失败。`;
+  return `【物体尺度与主次关系】
+- **用相对尺度描述，不要写厘米数**。图像模型不理解绝对尺寸，只理解参照关系：写「案几高度约到人物腰部」「书卷长度约为前臂一半」，而不是「案几高75cm」。
+- **道具符合时代**：只描述剧本中实际存在、且属于该时代的物件。不要列举「不该出现什么」——那些交由负向提示词处理，写进正向描述反而会把它们召唤出来。
+- **主次分明**：角色是画面唯一的视觉主体；道具是次要环境元素，不占据画面中心、不遮挡主体、不违反透视。
+- 若上方布局描述中存在会导致比例失真的表述，以本节的相对尺度关系为准。`;
 }
 
 function getFirstFramePrompt(cfg) {
@@ -598,8 +572,8 @@ ${ffScaleContract}
 - **风格要求**：${style}
 - **图片比例**：${imageRatio}
 
-【5层结构输出格式 + 尺度强制要求】
-返回JSON对象，prompt 字段按以下5层顺序拼接成**中文**，各层间用中文逗号「，」分隔（不加「第1层」等层标签文字）。**在第3层“内容焦点”中必须包含一段符合时代背景的真实物体尺度描述**（仅写本分镜实际出现的道具；古代场景示例：“所有道具严格符合古代真实物理比例，案几高约75cm，书卷为正常尺寸平放于案面，铜灯与茶具均为次要环境小物件，绝不可夸大，主角为绝对视觉焦点”）。
+【5层结构输出格式】
+返回JSON对象，prompt 字段按以下5层顺序拼接，各层间用逗号分隔（不加「第1层」等层标签文字）。**第3层“内容焦点”须用相对参照写清主要道具的尺度**（例如「案几高度约到人物腰部，书卷平放于案面约前臂一半长，灯具与茶具为次要小物件」），不要写厘米数。
 第1层-镜头设计：景别 + 机位角度 + 构图方式（如「中景，平视角度，三分法构图」）
 第2层-光线：光源方向 + 光线质感 + 色温（如「左侧柔暖光，黄金时刻暖调」）
 第3层-内容焦点：角色（仅「名字（参考图中的人物形象）」+初始姿态+表情，不写外貌）+ 场景环境关键细节（不含人物外貌） + **必须包含真实物体尺度描述（见上方强制要求）**
@@ -607,7 +581,8 @@ ${ffScaleContract}
 第5层-视觉风格：${style ? style + '，' : ''}电影分镜质感，${imageRatio} 画幅，高清细节，所有物体严格真实尺度
 
 JSON字段：
-- prompt：**必须全文中文**的图片生成提示词（直接给图片AI使用；禁止整句英文，仅允许必要风格专有名如 realistic 等单个词；必须自然融入符合时代的真实尺度描述，严禁时代错乱道具或物体过大失真）
+- prompt：${promptLangDirective(cfg)}的图片生成提示词（直接给图片AI使用；自然融入相对尺度描述）
+- **只写画面里应该有什么，不要写「严禁/不要出现××」**。所有不想要的元素由系统的负向提示词参数处理；写进正向描述反而会把它们召唤出来。
 - description：一句话中文描述（供人类参考）`;
 }
 
@@ -675,8 +650,8 @@ Return a JSON object containing:
 - **风格要求**：${style}
 - **图片比例**：${imageRatio}
 
-【5层结构输出格式 + 尺度强制要求】
-返回JSON对象，prompt 字段按以下5层顺序拼接成**中文**，各层间用中文逗号「，」分隔（不加层标签文字）。**在第3层“内容焦点”中必须包含一段符合时代背景的真实物体尺度描述**（仅写本分镜实际出现的道具，严禁写入与时代不符的现代物品）。
+【5层结构输出格式】
+返回JSON对象，prompt 字段按以下5层顺序拼接，各层间用逗号分隔（不加层标签文字）。**第3层“内容焦点”须用相对参照写清主要道具的尺度**，不要写厘米数。
 第1层-镜头设计：景别 + 机位角度 + 构图方式（如「特写，低角度，对角线构图」）
 第2层-光线：光源方向 + 光线质感 + 色温（如「轮廓光，强明暗对比，暖色饱和」）
 第3层-内容焦点：角色（仅「名字（参考图中的人物形象）」+高潮姿态+情绪表情）+ 场景关键细节（不含外貌） + **必须包含真实物体尺度描述**
@@ -684,7 +659,8 @@ Return a JSON object containing:
 第5层-视觉风格：${style ? style + '，' : ''}电影分镜质感，${imageRatio} 画幅，动态张力，所有物体严格真实尺度
 
 JSON字段：
-- prompt：**必须全文中文**的图片生成提示词（直接给图片AI使用；禁止整句英文；必须自然融入真实尺度描述）
+- prompt：${promptLangDirective(cfg)}的图片生成提示词（直接给图片AI使用；自然融入相对尺度描述）
+- **只写画面里应该有什么，不要写「严禁/不要出现××」**——否定项由负向提示词参数承担。
 - description：一句话中文描述（供人类参考）`;
 }
 
@@ -773,9 +749,9 @@ Return a JSON object containing:
 - **风格要求**：${style}
 - **图片比例**：${imageRatio}
 
-【5层结构输出格式 + 尺度 + 运镜演化强制要求（5-15秒视频）】
-返回JSON对象，prompt 字段按以下5层顺序拼接成**中文**，各层间用中文逗号「，」分隔（不加层标签文字）。
-- **第3层“内容焦点”必须同时包含**：真实物体尺度描述 + 根据本分镜 movement 和时长（5-15秒）进行的取景演化描述（例如“缓推后人物画面占比明显增加”、“手持跟拍后取景有自然轻微漂移”等）。
+【5层结构输出格式 + 运镜演化（5-15秒视频）】
+返回JSON对象，prompt 字段按以下5层顺序拼接，各层间用逗号分隔（不加层标签文字）。
+- **第3层“内容焦点”必须同时包含**：用相对参照写的道具尺度（不写厘米数） + 根据本分镜 movement 和时长（5-15秒）进行的取景演化描述（例如“缓推后人物画面占比明显增加”、“手持跟拍后取景有自然轻微漂移”等）。
 第1层-镜头设计：景别 + 机位角度 + 构图方式（需体现尾帧相对于首帧的自然演化）
 第2层-光线：光源方向 + 光线质感 + 色温
 第3层-内容焦点：角色（仅「名字（参考图中的人物形象）」+最终姿态+情绪余韵）+ 场景最终状态（不含外貌） + 真实尺度 + **运镜累积演化描述**（必须写，5-15秒视频需有明显但合理的视觉差异）
@@ -783,7 +759,8 @@ Return a JSON object containing:
 第5层-视觉风格：${style ? style + '，' : ''}电影分镜质感，${imageRatio} 画幅，所有物体严格真实尺度，运镜自然演化
 
 JSON字段：
-- prompt：**必须全文中文**的图片生成提示词（直接给图片AI使用；禁止整句英文；必须自然融入符合时代的真实尺度 + 根据 movement 的取景演化描述，5-15秒视频尾帧需体现运镜累积效果，严禁时代错乱道具或物体过大失真）
+- prompt：${promptLangDirective(cfg)}的图片生成提示词（直接给图片AI使用；自然融入相对尺度 + 根据 movement 的取景演化描述，5-15秒视频尾帧需体现运镜累积效果）
+- **只写画面里应该有什么，不要写「严禁/不要出现××」**——否定项由负向提示词参数承担。
 - description：一句话中文描述（供人类参考）`;
 }
 
@@ -1463,7 +1440,7 @@ Your task: Regenerate or optimize a precise, concise "layout_description" (spati
 Core Requirements (HIGHEST PRIORITY):
 1. Output ONLY the new layout_description text (1-2 short sentences, max ~120 characters). No explanations, no JSON, no labels.
 2. Be extremely specific about screen positions: left/center/right third of frame, relative distances between characters, facing directions, relation to props/environment, overall composition (rule of thirds / center / frame etc.), and camera distance feel.
-3. **Realistic physical scale awareness (MANDATORY)**: Explicitly state realistic sizes and proportions of major props that actually appear in the shot, matching the story's era/setting (e.g. ancient: writing desk ~75cm, scroll at normal size; modern: side table ~45cm). Never write phrases that would cause scale errors or anachronistic modern props in period settings.
+3. **Relative scale (MANDATORY)**: State prop proportions by reference to the human figure, matching the story's era (e.g. "writing desk reaches the seated figure's waist, scroll about half a forearm long"). **Never write absolute measurements in cm** — image models do not understand them. Describe only props that actually appear and belong to this period.
 4. **Cinematic breathing room for movement (MANDATORY)**: Reserve natural evolution space for the shot's declared camera_movement (push/pull/pan/handheld etc.). State that first/last frames must keep core character placement and realistic prop scales, but allow natural framing adjustments that result from the movement (e.g. slight tighter framing on push-in, slight handheld drift, natural entry/exit on pan). Goal: enable real dynamic video instead of near-static locked shots.
 5. **Cross-shot continuity (CRITICAL)**: The new layout MUST form a natural, believable spatial continuation from PREV_LAYOUT (if provided) and must logically lead into NEXT_LAYOUT (if provided). Avoid sudden unexplained left-right flips or major repositioning of characters between adjacent shots unless the ACTION/RESULT of the current shot explicitly requires it.
 6. The description must be directly usable as the highest-priority contract for first-frame and last-frame image generation (for models like Seedance 1.5 Pro), and must embed both realistic scale anchors AND movement breathing room to prevent prop drift and motion suppression in AI image/video generation.
@@ -1477,7 +1454,7 @@ Style: Professional, film-precise, actionable for AI image generators. Use Chine
 核心要求（最高优先级）：
 1. **只输出新的 layout_description 文本**（1-2 句短句，总字数建议控制在 120 字以内）。不要任何解释、不要 JSON、不要前缀后缀。
 2. 必须极度具体描述画面站位：画面左/中/右三分、人物间相对距离、朝向、与道具/环境的关系、整体构图方式（三分法/中心/框架等）、机位距离感。
-3. **真实物体尺度意识（强制）**：必须明确写出主要道具的真实物理尺度与相对比例，且**必须符合剧本时代背景**（仅写本分镜实际出现的道具；古代场景示例：“木质案几位于右下前景，高度约75cm，书卷平放为正常尺寸，铜灯与茶具均为次要环境小物件，绝不夸大”）。严禁写出任何会导致比例失真的表述，**严禁写入与时代不符的现代道具**。
+3. **相对尺度（强制）**：用参照关系写出主要道具的尺度比例，且符合剧本时代背景（示例：“木质案几位于右下前景，高度约到坐姿人物腰部，书卷平放约前臂一半长，铜灯与茶具为次要小物件”）。**不要写厘米数**；只描述本分镜实际出现且属于该时代的道具。
 4. **运镜呼吸空间（强制）**：必须为本分镜的 movement（推/拉/摇/跟/手持等）预留自然演化空间。说明首尾帧在核心站位和真实尺度一致的前提下，允许根据 movement 进行取景微调（缓推可稍紧、手持可轻微晃动偏移、横摇可有自然进入/退出）。目标是让首尾帧支持真正动态的视频，而不是几乎定格。
 5. **跨镜连贯性（铁律）**：新布局必须与「上一分镜的布局描述」形成自然延续，同时能引向下一分镜。除非 action/result 明确要求，否则严禁突然左右互换或大幅跳跃。
 6. 该描述将作为首帧/尾帧生成的最高优先级合同（尤其适配 Seedance 等模型），必须同时包含真实尺度锚点 + 运镜演化空间，防止AI生图时道具比例漂移或运镜被锁死。

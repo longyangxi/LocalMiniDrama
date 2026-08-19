@@ -381,6 +381,94 @@ function routes(db, log) {
         response.badRequest(res, err.message || '拆镜失败');
       }
     },
+    /**
+     * 单独重跑整集视觉设计（景别 / 角度 / 运镜 / 光线 / 景深）。
+     * 分镜生成时会自动跑一次；改过剧本或想换个拍法时可手动重跑。
+     */
+    designEpisodeVisuals: async (req, res) => {
+      try {
+        const episodeId = Number(req.params.episode_id);
+        if (!episodeId) return response.badRequest(res, '缺少 episode_id');
+        const shotVisualDesignService = require('../services/shotVisualDesignService');
+        const result = await shotVisualDesignService.designEpisodeVisuals(db, log, episodeId, {
+          model: (req.body || {}).model,
+        });
+        response.success(res, {
+          ...result,
+          message: `已为 ${result.updated}/${result.total} 个镜头重做视觉设计，固定镜头占比 ${Math.round(result.staticRatio * 100)}%`,
+        });
+      } catch (err) {
+        log.error('episode designVisuals', { error: err.message, episode_id: req.params.episode_id });
+        response.internalError(res, err.message || '视觉设计失败');
+      }
+    },
+
+    /**
+     * 首帧多选一：一次生成 N 张候选，按质检分自动选出最好的一张并绑定到分镜。
+     * body: { count?:number(2-6，默认4), frame_type?:'first'|'last', model?:string }
+     */
+    frameCandidates: async (req, res) => {
+      try {
+        const id = Number(req.params.id);
+        if (!id) return response.badRequest(res, '缺少分镜 id');
+        const body = req.body || {};
+        const frameQualityService = require('../services/frameQualityService');
+        const result = await frameQualityService.generateBestOfN(db, log, {
+          storyboardId: id,
+          frameType: body.frame_type || 'first',
+          count: body.count,
+          model: body.model,
+        });
+        response.success(res, {
+          ...result,
+          message: result.best
+            ? `已生成 ${result.candidates.length} 张候选，选用得分 ${result.best.score} 的一张`
+            : '候选全部生成失败',
+        });
+      } catch (err) {
+        log.error('storyboards frameCandidates', { error: err.message, id: req.params.id });
+        response.badRequest(res, err.message || '候选生成失败');
+      }
+    },
+
+    /** 对某条已完成的图生记录手动重跑质检 */
+    checkFrameQuality: async (req, res) => {
+      try {
+        const imageGenId = Number(req.body?.image_generation_id || req.params.image_id);
+        if (!imageGenId) return response.badRequest(res, '缺少 image_generation_id');
+        const cfg = require('../config').loadConfig();
+        const frameQualityService = require('../services/frameQualityService');
+        const result = await frameQualityService.checkImageGeneration(db, log, imageGenId, cfg);
+        response.success(res, result);
+      } catch (err) {
+        log.error('storyboards checkFrameQuality', { error: err.message });
+        response.internalError(res, err.message || '质检失败');
+      }
+    },
+
+    /**
+     * 音频先行：为整集重排镜头时长。
+     * body: { synthesize?:boolean(默认true，先补齐TTS拿真实时长), force?:boolean(重合成TTS) }
+     */
+    planEpisodeDurations: async (req, res) => {
+      try {
+        const episodeId = Number(req.params.episode_id);
+        if (!episodeId) return response.badRequest(res, '缺少 episode_id');
+        const shotDurationPlanner = require('../services/shotDurationPlanner');
+        const result = await shotDurationPlanner.planEpisodeDurations(db, log, episodeId, {
+          synthesize: (req.body || {}).synthesize !== false,
+          force: !!(req.body || {}).force,
+        });
+        response.success(res, {
+          ...result,
+          message: `已按人声时长重排 ${result.updated} 条分镜时长`
+            + (result.splitSuggestions.length ? `，另有 ${result.splitSuggestions.length} 条建议拆镜` : ''),
+        });
+      } catch (err) {
+        log.error('episode planDurations', { error: err.message, episode_id: req.params.episode_id });
+        response.internalError(res, err.message || '时长规划失败');
+      }
+    },
     episodeStoryboardsGenerate: (req, res) => {
       try {
         const taskId = episodeStoryboardService.generateStoryboard(

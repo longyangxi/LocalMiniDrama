@@ -931,6 +931,46 @@
               <el-button v-if="batchImageRunning" size="large" type="danger" plain @click="batchImageStopping = true">停止图片</el-button>
               <el-button v-if="batchVideoRunning" size="large" type="danger" plain @click="batchVideoStopping = true">停止视频</el-button>
             </div>
+            <!-- 生图/生视频之前的两道整集处理：先把时长对齐台词，再统一做视觉设计 -->
+            <div class="sb-batch-right sb-batch-prepass">
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:340px;line-height:1.7">
+                    <div style="font-weight:600;margin-bottom:4px">音频先行对齐时长</div>
+                    <div>先为每镜合成对白/旁白 TTS（已有则复用），按<b>真实语音时长</b>重排镜头时长。</div>
+                    <div style="margin-top:6px">台词 20 字塞进 5 秒的镜头，后期只能靠变速把配音压进去，是成片一听就假的主因。建议在<b>批量生成分镜视频之前</b>跑一次。</div>
+                  </div>
+                </template>
+                <el-button
+                  size="large"
+                  plain
+                  :loading="planningDurations"
+                  :disabled="!currentEpisodeId || planningDurations || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating"
+                  @click="onPlanEpisodeDurations"
+                >
+                  音频先行对齐时长
+                </el-button>
+              </el-tooltip>
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:340px;line-height:1.7">
+                    <div style="font-weight:600;margin-bottom:4px">重做整集视觉设计</div>
+                    <div>拿到整集镜头序列后统一分配<b>景别 / 机位角度 / 运镜 / 灯光 / 景深</b>，并重建视频提示词。</div>
+                    <div style="margin-top:6px">只有看得到全集，才能落实「禁止连续 3 镜同景别」「对话正反打」「段落开合」这些节奏规则。动作、台词、分段不会被改动。</div>
+                    <div style="margin-top:6px;color:#909399">生成分镜时已自动跑过一次；改过剧本或想换个拍法时再手动重跑。</div>
+                  </div>
+                </template>
+                <el-button
+                  size="large"
+                  plain
+                  :loading="designingVisuals"
+                  :disabled="!currentEpisodeId || designingVisuals || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating"
+                  @click="onDesignEpisodeVisuals"
+                >
+                  重做视觉设计
+                </el-button>
+              </el-tooltip>
+            </div>
             <!-- 连贯帧模式 UI 暂时隐藏（保留变量与批量生成逻辑，后续可快速恢复） -->
             <div v-if="false" class="batch-video-options" style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;">
               <el-checkbox v-model="videoFrameContiguity" size="small">
@@ -1324,8 +1364,34 @@
                       <div v-if="getSbFirstImage(sb.id)?.prompt" class="sb-fl-slot-prompt" :title="getSbFirstImage(sb.id).prompt">
                         {{ getSbFirstImage(sb.id).prompt }}
                       </div>
+                      <div v-if="sbFrameQuality[sb.id]" class="sb-fl-qa" :class="{ 'sb-fl-qa--low': sbFrameQuality[sb.id].score < 70 }">
+                        质检 {{ sbFrameQuality[sb.id].score }} 分
+                        <span v-if="sbFrameQuality[sb.id].scores?.length > 1" class="sb-fl-qa-all">
+                          （候选 {{ sbFrameQuality[sb.id].scores.join(' / ') }}）
+                        </span>
+                        <span v-if="sbFrameQuality[sb.id].issues?.length" :title="sbFrameQuality[sb.id].issues.join('；')" class="sb-fl-qa-issue">
+                          · {{ sbFrameQuality[sb.id].issues[0] }}
+                        </span>
+                      </div>
                       <div class="sb-fl-slot-actions">
                         <el-button type="primary" size="small" :loading="generatingSbFirstImageIds.has(sb.id)" @click="onGenerateSbFrameImage(sb, 'first')">生成</el-button>
+                        <el-tooltip placement="top" :show-after="200">
+                          <template #content>
+                            <div style="max-width:320px;line-height:1.7">
+                              <div style="font-weight:600;margin-bottom:4px">4 选 1（多候选择优）</div>
+                              <div>一次生成 4 张候选，由视觉模型按<b>角色一致性、时代穿帮、肢体畸变、宫格拼贴</b>打分，自动选最高分的一张绑定为首帧。</div>
+                              <div style="margin-top:6px">视频是全流程最贵的一步，在首帧多花几张图的钱，比生成完视频再返工便宜得多。</div>
+                            </div>
+                          </template>
+                          <el-button
+                            size="small"
+                            :loading="frameCandidateSbIds.has(sb.id)"
+                            :disabled="generatingSbFirstImageIds.has(sb.id)"
+                            @click="onGenerateFrameCandidates(sb, 'storyboard_first')"
+                          >
+                            4 选 1
+                          </el-button>
+                        </el-tooltip>
                         <el-tooltip v-if="canUsePrevTailAsFirst(sb)" content="直接使用上一分镜的尾帧图片（高清原图）替换本首帧，画面更清晰" placement="top">
                           <el-button size="small" :loading="usingPrevTailAsFirstIds.has(sb.id)" @click="onUsePrevTailAsFirst(sb)">上镜尾帧</el-button>
                         </el-tooltip>
@@ -1628,6 +1694,95 @@
             <div class="video-option-row">
               <el-switch v-model="videoBurnDialogue" />
               <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="对白字幕">
+            <div class="video-option-row">
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:320px;line-height:1.7">
+                    把各镜对白按语速切分成字幕条，硬烧进成片（只显示台词，不显示角色名）。<br/>
+                    大量观众在无声环境下刷剧，没字幕等于没内容。
+                  </div>
+                </template>
+                <el-switch v-model="videoDialogueSubtitles" />
+              </el-tooltip>
+            </div>
+          </el-form-item>
+          <el-form-item label="段落转场">
+            <div class="video-option-row">
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:340px;line-height:1.7">
+                    段内保持硬切（短剧节奏靠密集硬切），只在<b>剧情段落边界</b>加转场。<br/>
+                    「自动」＝ 换地点用黑场、同地点用叠化。<br/>
+                    右侧为转场时长（秒）。转场需要在段间重编码，合成会比纯硬切慢一些。
+                  </div>
+                </template>
+                <el-select v-model="videoTransitionMode" style="width: 138px">
+                  <el-option label="不加转场（最快）" value="none" />
+                  <el-option label="自动（推荐）" value="auto" />
+                  <el-option label="全部叠化" value="dissolve" />
+                  <el-option label="全部黑场" value="fadeblack" />
+                  <el-option label="全部左擦除" value="wipeleft" />
+                </el-select>
+              </el-tooltip>
+              <el-input-number
+                v-if="videoTransitionMode !== 'none'"
+                v-model="videoTransitionDuration"
+                :min="0.2"
+                :max="1.5"
+                :step="0.1"
+                :precision="1"
+                controls-position="right"
+                style="width: 92px"
+              />
+            </div>
+          </el-form-item>
+          <el-form-item label="背景音乐">
+            <div class="video-option-row">
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:360px;line-height:1.7">
+                    把有版权的音乐按情绪放进 <b>storage/bgm/&lt;情绪&gt;/</b>（tense 紧张 / suspense 悬疑 / sad 悲伤 / warm 温情 / uplift 高昂 / neutral 中性），
+                    合成时会按<b>剧情段落</b>自动选曲、段落间交叉淡入。<br/>
+                    有对白时音乐自动压低约 10dB（ducking），说完回升。<br/>
+                    曲库为空时静默跳过，不影响合成。
+                  </div>
+                </template>
+                <el-switch v-model="videoBgm" />
+              </el-tooltip>
+              <el-slider
+                v-if="videoBgm"
+                v-model="videoBgmVolume"
+                :min="0.05"
+                :max="0.6"
+                :step="0.01"
+                :format-tooltip="(v) => `音量 ${Math.round(v * 100)}%`"
+                style="width: 96px;margin-left:10px"
+              />
+            </div>
+          </el-form-item>
+          <el-form-item label="色彩统一">
+            <div class="video-option-row">
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div style="max-width:340px;line-height:1.7">
+                    各镜由 AI 独立生成，色温与对比度会逐镜漂移。合成时统一过一遍调色能明显改善整体感。<br/>
+                    预设都刻意保守——AI 画面本身饱和度已偏高，重手调色只会更假。<br/>
+                    调色排在字幕之前，不会把白色字幕一起染色。
+                  </div>
+                </template>
+                <el-select v-model="videoColorGrade" style="width: 158px">
+                  <el-option label="不调色" value="none" />
+                  <el-option label="轻度归一（推荐）" value="neutral" />
+                  <el-option label="电影感" value="film" />
+                  <el-option label="暖调" value="warm" />
+                  <el-option label="冷调" value="cool" />
+                  <el-option label="青橙" value="teal_orange" />
+                  <el-option label="低饱和高对比" value="bleach" />
+                </el-select>
+              </el-tooltip>
             </div>
           </el-form-item>
           <el-form-item label="水印">
@@ -2816,6 +2971,16 @@ const videoQuality = ref('high')
 const videoSubtitle = ref(false)
 /** 合成整集时把各镜对白 TTS（audio_local_path）按分镜时长对齐并混入成片 */
 const videoBurnDialogue = ref(false)
+/** 对白硬字幕：默认开启，短剧的主要消费场景是无声浏览 */
+const videoDialogueSubtitles = ref(true)
+/** 段落转场：none / auto / 固定类型；auto = 换地点黑场、同地点叠化 */
+const videoTransitionMode = ref('auto')
+const videoTransitionDuration = ref(0.5)
+/** BGM 铺底（曲库为空时后端会静默跳过） */
+const videoBgm = ref(true)
+const videoBgmVolume = ref(0.28)
+/** 成片色彩统一预设 */
+const videoColorGrade = ref('neutral')
 const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
@@ -3243,6 +3408,10 @@ const batchImageRunning = ref(false)
 const batchImageStopping = ref(false)
 const batchImageProgress = ref({ current: 0, total: 0, failed: 0 })
 const inferringParams = ref(false)
+/** 音频先行：按台词真实语音时长重排整集镜头时长 */
+const planningDurations = ref(false)
+/** 整集视觉设计：景别/角度/运镜/光线/景深 */
+const designingVisuals = ref(false)
 const showVideoParamsDialog = ref(false)
 const videoParamsTarget = ref(null)
 const videoParamsSaving = ref(false)
@@ -3963,6 +4132,10 @@ const sbSelectedLastImgId = ref({}) // sbId → 选中的尾帧 image_generation
 const sbSelectedVideoId = ref({}) // sbId → 选中的 video_generation.id
 const generatingSbFirstImageIds = reactive(new Set())
 const generatingSbLastImageIds = reactive(new Set())
+/** 首帧多选一进行中的分镜 id */
+const frameCandidateSbIds = reactive(new Set())
+/** sbId → 最近一次质检得分与问题，用于在首帧槽位上给出提示 */
+const sbFrameQuality = ref({})
 /** sbId → 'first' | 'last'，上传目标槽位 */
 const sbImageUploadSlotById = ref({})
 
@@ -6520,6 +6693,109 @@ async function onBatchInferParams() {
   }
 }
 
+/**
+ * 音频先行：先补齐各镜 TTS 拿到真实语音时长，再按「装得下台词」重排整集镜头时长。
+ * 不做这一步的话，台词过长的镜头只能靠变速把配音压进去，成片一听就假。
+ */
+async function onPlanEpisodeDurations() {
+  if (!currentEpisodeId.value) return
+  try {
+    await ElMessageBox.confirm(
+      '将按每镜台词/旁白的真实语音时长重排镜头时长。缺失配音的分镜会先自动合成 TTS（消耗 TTS 额度），已有配音则直接复用。',
+      '音频先行对齐时长',
+      { confirmButtonText: '开始对齐', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch (_) {
+    return
+  }
+  planningDurations.value = true
+  try {
+    const res = await storyboardsAPI.planEpisodeDurations(currentEpisodeId.value, { synthesize: true })
+    await loadDrama()
+    const splits = res?.splitSuggestions || []
+    ElMessage.success(res?.message || `已重排 ${res?.updated ?? 0} 条分镜时长`)
+    if (splits.length > 0) {
+      const detail = splits
+        .map((s) => `#${s.storyboard_number}「${s.title || ''}」人声约 ${s.speech_sec}s`)
+        .join('<br/>')
+      ElMessageBox.alert(
+        `以下分镜靠拉长时长已经装不下台词，建议用分镜行内的「按对白拆镜」拆开：<br/><br/>${detail}`,
+        `${splits.length} 条分镜建议拆镜`,
+        { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
+      )
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '时长对齐失败')
+  } finally {
+    planningDurations.value = false
+  }
+}
+
+/**
+ * 整集视觉设计：拿到全集镜头序列后统一分配景别/角度/运镜/光线/景深。
+ * 逐镜生成看不到自己后面还有什么，落实不了「禁止连续3镜同景别」「对话正反打」这类全局节奏规则。
+ */
+async function onDesignEpisodeVisuals() {
+  if (!currentEpisodeId.value) return
+  try {
+    await ElMessageBox.confirm(
+      '将根据整集镜头序列重新分配每个镜头的景别、机位角度、运镜、灯光与景深，并重建视频提示词。现有的动作、台词、分段不会被改动。',
+      '重做整集视觉设计',
+      { confirmButtonText: '开始设计', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch (_) {
+    return
+  }
+  designingVisuals.value = true
+  try {
+    const res = await storyboardsAPI.designEpisodeVisuals(currentEpisodeId.value, {})
+    await loadDrama()
+    ElMessage.success(res?.message || `已重做 ${res?.updated ?? 0} 个镜头的视觉设计`)
+  } catch (e) {
+    ElMessage.error(e.message || '视觉设计失败')
+  } finally {
+    designingVisuals.value = false
+  }
+}
+
+/**
+ * 首帧多选一：一次生成 4 张候选，由视觉模型按角色一致性/时代/畸变打分，自动选最优。
+ * 视频是全流程最贵的一步，在首帧多花几张图的钱远比生成完视频再返工划算。
+ */
+async function onGenerateFrameCandidates(sb, frameType = 'storyboard_first') {
+  if (sb && typeof sb === 'object' && sb.__v_isRef) sb = sb.value
+  if (!sb?.id) return
+  if (frameCandidateSbIds.has(sb.id)) return
+  frameCandidateSbIds.add(sb.id)
+  try {
+    const res = await storyboardsAPI.frameCandidates(sb.id, { count: 4, frame_type: frameType })
+    const best = res?.best
+    const candidates = res?.candidates || []
+    if (best) {
+      sbFrameQuality.value = {
+        ...sbFrameQuality.value,
+        [sb.id]: {
+          score: best.score,
+          issues: best.report?.issues || [],
+          scores: candidates.map((c) => c.score),
+        },
+      }
+      ElMessage.success(
+        `已从 ${candidates.length} 张候选中选用得分 ${best.score} 的一张（各候选：${candidates
+          .map((c) => c.score)
+          .join(' / ')}）`
+      )
+    } else {
+      ElMessage.warning(res?.message || '候选全部生成失败')
+    }
+    await loadSingleStoryboardMedia(sb.id)
+  } catch (e) {
+    ElMessage.error(e.message || '候选生成失败')
+  } finally {
+    frameCandidateSbIds.delete(sb.id)
+  }
+}
+
 /** 一键用 AI 重新生成/优化本分镜的布局描述（自动参考上下分镜保证前后连贯） */
 async function onRegenerateLayoutDescription(sb) {
   if (sb && typeof sb === 'object' && sb.__v_isRef) sb = sb.value
@@ -7137,6 +7413,12 @@ function getFinalizeMergeOptions() {
   return {
     burn_narration_subtitles: !!videoSubtitle.value,
     burn_dialogue_audio: !!videoBurnDialogue.value,
+    burn_dialogue_subtitles: !!videoDialogueSubtitles.value,
+    transition_mode: videoTransitionMode.value || 'none',
+    transition_duration: Number(videoTransitionDuration.value) || 0.5,
+    bgm_enabled: !!videoBgm.value,
+    bgm_volume: Number(videoBgmVolume.value) || 0.28,
+    color_grade_preset: videoColorGrade.value || 'none',
     watermark_text: videoWatermark.value ? String(videoWatermarkText.value || '').trim().slice(0, 200) : '',
   }
 }
@@ -9084,6 +9366,11 @@ html.light .section-title { color: #1e1b4b; }
   gap: 8px;
   flex-wrap: wrap;
 }
+/* 生图/生视频前的整集处理，与主批量按钮分行，避免和「批量生成」混作一排 */
+.sb-batch-prepass {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
 .batch-status {
   margin-top: 12px;
   padding: 12px 16px;
@@ -10145,6 +10432,22 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   gap: 6px;
   justify-content: center;
   align-items: center;
+}
+/* 首帧质检结果：低于阈值时标红，提示这一镜可能需要重生成 */
+.sb-fl-qa {
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--el-color-success);
+  padding: 2px 4px;
+  text-align: center;
+  word-break: break-all;
+}
+.sb-fl-qa--low {
+  color: var(--el-color-warning);
+}
+.sb-fl-qa-all,
+.sb-fl-qa-issue {
+  color: #9ca3af;
 }
 .sb-fl-first-lock-opt {
   margin: 0 2px;

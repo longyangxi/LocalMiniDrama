@@ -140,4 +140,23 @@ export const storyboardsAPI = {
   splitByAudio(id) {
     return request.post(`/storyboards/${id}/split-by-audio`, {})
   },
+  /**
+   * 音频先行：按台词/旁白的真实语音时长重排整集镜头时长。
+   * body.synthesize 为 true（默认）时会先补齐 TTS 拿实测时长；false 则只按字数估算。
+   */
+  planEpisodeDurations(episodeId, body = {}) {
+    return request.post(`/episodes/${episodeId}/plan-durations`, body)
+  },
+  /** 整集视觉设计：拿到全集镜头序列后统一分配景别/角度/运镜/光线/景深 */
+  designEpisodeVisuals(episodeId, body = {}) {
+    return request.post(`/episodes/${episodeId}/design-visuals`, body)
+  },
+  /** 首帧多选一：一次生成 N 张候选，按质检分自动选最优并绑定到分镜 */
+  frameCandidates(id, body = {}) {
+    return request.post(`/storyboards/${id}/frame-candidates`, body)
+  },
+  /** 对某条图生记录重跑质检，返回 { ok, score, report } */
+  checkFrameQuality(imageGenerationId) {
+    return request.post('/storyboards/frame-quality-check', { image_generation_id: imageGenerationId })
+  },
 }

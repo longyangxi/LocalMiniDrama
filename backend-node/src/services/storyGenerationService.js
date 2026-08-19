@@ -1,4 +1,6 @@
-// 根据故事梗概 + 风格/类型/集数，调用文本模型生成扩展后的故事/剧本（JSON 数组格式）
+// 根据故事梗概 + 风格/类型/集数生成剧本。
+// 默认走三段式（故事圣经 → 分集节拍表 → 逐集正文），见 storyBibleService；
+// 三段式失败或显式 body.mode === 'legacy' 时，回落到旧的一次性 JSON 生成。
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const taskService = require('./taskService');
@@ -92,30 +94,84 @@ async function generateStory(db, log, body) {
   };
 }
 
+/** 三段式产物落库：故事圣经写 dramas，节拍表/概要写各集 */
+function persistThreeStageArtifacts(db, log, dramaId, bible, episodes) {
+  const now = new Date().toISOString();
+  try {
+    db.prepare('UPDATE dramas SET story_bible = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify(bible), now, dramaId);
+  } catch (err) {
+    log?.warn?.('[剧本] 故事圣经落库失败', { error: err.message });
+  }
+  for (const ep of episodes) {
+    if (!ep.beat_sheet && !ep.summary) continue;
+    try {
+      db.prepare(
+        `UPDATE episodes SET beat_sheet = ?, summary = ?, updated_at = ?
+          WHERE drama_id = ? AND episode_number = ? AND deleted_at IS NULL`
+      ).run(
+        ep.beat_sheet ? JSON.stringify(ep.beat_sheet) : null,
+        ep.summary || null,
+        now,
+        dramaId,
+        ep.episode
+      );
+    } catch (err) {
+      log?.warn?.('[剧本] 节拍表落库失败', { episode: ep.episode, error: err.message });
+    }
+  }
+}
+
 async function processStoryGeneration(db, log, taskId, req) {
   taskService.updateTaskStatus(db, taskId, 'processing', 10, '正在生成剧本...');
   try {
-    const result = await generateStory(db, log, req);
-    const episodes = result?.episodes || [];
+    const useLegacy = String(req.mode || '').toLowerCase() === 'legacy';
+    let episodes = [];
+    let bible = null;
+
+    if (!useLegacy) {
+      try {
+        const storyBibleService = require('./storyBibleService');
+        const out = await storyBibleService.generateStoryThreeStage(db, log, req, {
+          onStage: (_stage, progress, message) => {
+            taskService.updateTaskStatus(db, taskId, 'processing', progress, message);
+          },
+        });
+        bible = out.bible;
+        episodes = out.episodes;
+      } catch (err) {
+        log.warn('[剧本] 三段式生成失败，回落到一次性生成', { error: err.message });
+        taskService.updateTaskStatus(db, taskId, 'processing', 20, '三段式生成失败，正在回落到快速模式...');
+      }
+    }
+
+    if (episodes.length === 0) {
+      const result = await generateStory(db, log, req);
+      episodes = result?.episodes || [];
+    }
+
     if (episodes.length === 0) {
       taskService.updateTaskError(db, taskId, 'AI 未能生成剧本');
       return;
     }
 
     const dramaId = Number(req.drama_id);
-    taskService.updateTaskStatus(db, taskId, 'processing', 75, '正在保存剧本...');
+    taskService.updateTaskStatus(db, taskId, 'processing', 90, '正在保存剧本...');
 
     const saved = dramaService.saveEpisodes(db, log, dramaId, {
       episodes: episodes.map((ep, i) => ({
         episode_number: ep.episode ?? i + 1,
         title: ep.title || `第${ep.episode ?? i + 1}集`,
         script_content: ep.content || '',
+        description: ep.summary || null,
       })),
     });
     if (!saved) {
       taskService.updateTaskError(db, taskId, '保存剧本失败：项目不存在');
       return;
     }
+
+    if (bible) persistThreeStageArtifacts(db, log, dramaId, bible, episodes);
 
     if (req.summary || req.genre || req.drama_style || req.metadata || req.title) {
       dramaService.saveOutline(db, log, dramaId, {
@@ -130,6 +186,8 @@ async function processStoryGeneration(db, log, taskId, req) {
     taskService.updateTaskResult(db, taskId, {
       drama_id: dramaId,
       episode_count: episodes.length,
+      mode: bible ? 'three_stage' : 'legacy',
+      has_story_bible: !!bible,
     });
     log.info('Story generation completed and saved', { task_id: taskId, drama_id: dramaId, episode_count: episodes.length });
   } catch (err) {

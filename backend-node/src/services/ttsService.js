@@ -116,8 +116,20 @@ async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed) 
  * 合成 TTS 并保存到本地文件
  * @returns {{ local_path: string, audio_url: string }}
  */
-async function synthesize(db, log, { text, storyboard_id, config, storage_base, voice_id, speed }) {
+async function synthesize(db, log, { text, storyboard_id, config, storage_base, voice_id, speed, strip_speaker }) {
   if (!text || !text.trim()) throw new Error('text 不能为空');
+
+  // 「林薇：你走吧」里的角色名是给人看的排版，不该被念出来。
+  // 多说话人时逐行剥离前缀后再拼回，仅保留台词正文。
+  let ttsText = String(text);
+  if (strip_speaker) {
+    const { parseDialogueToEntries } = require('./speechTiming');
+    const entries = parseDialogueToEntries(ttsText);
+    if (entries.length > 0) {
+      const stripped = entries.map((e) => e.text).filter(Boolean).join(' ');
+      if (stripped) ttsText = stripped;
+    }
+  }
   const aiConfigService = require('./aiConfigService');
   const ttsConfig = config || (() => {
     const configs = aiConfigService.listConfigs(db, 'tts');
@@ -138,16 +150,15 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
 
   if (provider === 'minimax') {
     audioBuffer = await synthesizeWithMinimax(
-      text,
+      ttsText,
       voiceId || 'female-shaonv',
       ttsConfig.api_key,
       groupId,
       ttsModel || 'speech-02-hd'
     );
   } else if (provider === 'openai' || ttsConfig.base_url) {
-    console.log('==c sxy synthesizeWithOpenai', text, voiceId, ttsConfig.api_key, ttsConfig.base_url, ttsModel, finalSpeed);
     audioBuffer = await synthesizeWithOpenai(
-      text,
+      ttsText,
       voiceId || 'alloy',
       ttsConfig.api_key,
       ttsConfig.base_url,

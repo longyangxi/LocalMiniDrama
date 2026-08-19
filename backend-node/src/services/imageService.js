@@ -1407,6 +1407,25 @@ async function processImageGeneration(db, log, imageGenId) {
       });
     }
 
+    // ── Step 3.97: 自动负向提示词 ────────────────────────────────────
+    // 扩散模型对正向 prompt 里的「严禁出现手机」不敏感，反而会被其中的实词干扰。
+    // 时代穿帮、多余人物、宫格拼贴这些「不想要」的东西，统一走 negative_prompt 参数。
+    let autoNegativePrompt = null;
+    try {
+      const negativePromptBuilder = require('./negativePromptBuilder');
+      autoNegativePrompt = negativePromptBuilder.buildForImageGeneration(db, log, {
+        ...row,
+        reference_images: reference_image_urls ? JSON.stringify(reference_image_urls) : row.reference_images,
+      });
+      log.info('[图生] Step3.97 自动负向提示词', {
+        id: imageGenId,
+        len: (autoNegativePrompt || '').length,
+        preview: (autoNegativePrompt || '').slice(0, 120),
+      });
+    } catch (negErr) {
+      log.warn('[图生] 自动负向提示词构建失败', { id: imageGenId, error: negErr.message });
+    }
+
     const result = await imageClient.callImageApi(db, log, {
       prompt: finalPrompt,
       model: row.model,
@@ -1420,7 +1439,9 @@ async function processImageGeneration(db, log, imageGenId) {
       files_base_url: filesBaseUrl,
       storage_local_path: storageLocalPath,
       system_prompt: apiSystemPrompt,
-      negative_prompt: row.negative_prompt || undefined,
+      // 参数名必须是 user_negative_prompt —— callImageApi 只解构这个键。
+      // 此前传的是 negative_prompt，导致分镜图的负向提示词一直被静默丢弃。
+      user_negative_prompt: autoNegativePrompt || row.negative_prompt || undefined,
       frame_identity_lock: isFrameIdentityLock,
     });
     log.info('[图生] Step4 图生 API 返回', { id: imageGenId, api_ms: Date.now() - tApi, has_error: !!result.error, elapsed: elapsed() });
@@ -1522,6 +1543,16 @@ async function processImageGeneration(db, log, imageGenId) {
       }
     }
     log.info('[图生] ✓ 完成', { id: imageGenId, local_path: localPath, total_elapsed: elapsed() });
+
+    // ── Step 7: 质检闸门（首/尾/关键帧）──────────────────────────────
+    // 用一次廉价的视觉模型调用检查角色一致性/时代穿帮/肢体畸变/宫格拼贴，
+    // 低于阈值自动带着针对性修正指令重排一次生成。异步执行，不阻塞本次返回。
+    // 重试产物同样会被质检；递归由 scheduleRetry 里的 qa_attempt >= max_retries 终止。
+    setImmediate(() => {
+      require('./frameQualityService')
+        .runGateAfterGeneration(db, log, imageGenId)
+        .catch((e) => log.warn('[质检] 后台执行失败', { id: imageGenId, error: e.message }));
+    });
 
     // ── 首尾帧绑定决策 ─────────────────────────────────────────────
     // 优先信任 image_generations 行自身保存的 frame_type（前端点击“尾帧生成”会正确传 'storyboard_last'）。

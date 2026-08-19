@@ -109,6 +109,7 @@ function ensureAllColumns(database) {
     { name: 'total_duration', type: 'INTEGER DEFAULT 0' },
     { name: 'status',         type: 'TEXT DEFAULT \'draft\'' },
     { name: 'metadata',       type: 'TEXT' },
+    { name: 'story_bible',    type: 'TEXT' },   // JSON: 故事圣经（人设/世界观/关系/禁忌），全剧不变量
     { name: 'created_at',     type: 'TEXT' },
     { name: 'updated_at',     type: 'TEXT' },
     { name: 'deleted_at',     type: 'TEXT' },
@@ -121,6 +122,8 @@ function ensureAllColumns(database) {
     { name: 'title',          type: 'TEXT DEFAULT \'\'' },
     { name: 'script_content', type: 'TEXT' },
     { name: 'description',    type: 'TEXT' },
+    { name: 'beat_sheet',     type: 'TEXT' },   // JSON: 本集节拍表（hook/turn/peak/cliffhanger）
+    { name: 'summary',        type: 'TEXT' },   // 本集剧情概要，供下一集接续与分镜对齐
     { name: 'duration',       type: 'INTEGER DEFAULT 0' },
     { name: 'video_url',      type: 'TEXT' },
     { name: 'thumbnail',      type: 'TEXT' },
@@ -333,6 +336,9 @@ function ensureAllColumns(database) {
     { name: 'task_id',          type: 'TEXT' },
     { name: 'completed_at',     type: 'TEXT' },
     { name: 'error_msg',        type: 'TEXT' },
+    { name: 'qa_score',         type: 'REAL' },              // 首帧质检得分 0-100
+    { name: 'qa_report',        type: 'TEXT' },              // JSON: 质检明细（身份/时代/人数/画质）
+    { name: 'qa_attempt',       type: 'INTEGER DEFAULT 0' }, // 已自动重试次数
     { name: 'created_at',       type: 'TEXT' },
     { name: 'updated_at',       type: 'TEXT' },
     { name: 'deleted_at',       type: 'TEXT' },

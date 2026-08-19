@@ -40,6 +40,8 @@ function routes(db, log, cfg) {
           text: ttsText,
           storyboard_id: storyboard_id || null,
           storage_base: getStoragePath(),
+          // 对白文本形如「林薇：你走吧」，角色名不应被念出来
+          strip_speaker: kind === 'dialogue',
         });
         if (storyboard_id && result.local_path) {
           const now = new Date().toISOString();
