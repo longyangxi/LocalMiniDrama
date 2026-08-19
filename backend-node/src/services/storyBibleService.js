@@ -12,6 +12,8 @@
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const craft = require('./storyCraftPrompts');
+const pacing = require('./pacingContract');
+const storyDoctor = require('./storyDoctorService');
 const { safeParseAIJSON } = require('../utils/safeJson');
 
 /** 从模型返回里取出对象（容忍被包进 {data:…}/{bible:…} 的情况） */
@@ -36,11 +38,15 @@ function coerceArray(parsed) {
 }
 
 /** 第一段：生成故事圣经 */
-async function generateStoryBible(db, log, { premise, style, type, episodeCount, model, cfg, creativePreferences }) {
+async function generateStoryBible(db, log, { premise, style, type, episodeCount, model, cfg, creativePreferences, pacingContract }) {
   const isEn = promptI18n.isEnglish(cfg);
   const systemPrompt = craft.getStoryBibleSystemPrompt(isEn, episodeCount);
   const preferenceBlock = craft.buildCreativePreferencesBlock(isEn, creativePreferences);
-  const userPrompt = [promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount), preferenceBlock]
+  const userPrompt = [
+    promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount),
+    preferenceBlock,
+    pacingContract ? pacing.formatPacingContractForPrompt(pacingContract, isEn) : '',
+  ]
     .filter(Boolean).join('\n\n');
 
   const requestBible = async (prompt, temperature, tag) => {
@@ -82,11 +88,11 @@ async function generateStoryBible(db, log, { premise, style, type, episodeCount,
 }
 
 /** 第二段：生成分集节拍表 */
-async function generateBeatSheet(db, log, { bible, episodeCount, model, cfg }) {
+async function generateBeatSheet(db, log, { bible, episodeCount, model, cfg, pacingContract }) {
   const isEn = promptI18n.isEnglish(cfg);
   const n = Math.max(1, Number(episodeCount) || 1);
   const systemPrompt = craft.getBeatSheetSystemPrompt(isEn, n);
-  const userPrompt = craft.buildBeatSheetUserPrompt(isEn, bible, n);
+  const userPrompt = craft.buildBeatSheetUserPrompt(isEn, bible, n, pacingContract);
 
   const requestBeatSheet = async (prompt, temperature, tag) => {
     const raw = await aiClient.generateText(db, log, 'text', prompt, systemPrompt, {
@@ -113,17 +119,30 @@ async function generateBeatSheet(db, log, { bible, episodeCount, model, cfg }) {
     choice_and_cost: String(ep?.choice_and_cost || '').trim(),
     value_change: String(ep?.value_change || '').trim(),
     payoff_ids: Array.isArray(ep?.payoff_ids) ? ep.payoff_ids : [],
-    beats: Array.isArray(ep?.beats) ? ep.beats : [],
+    pacing_contract: pacingContract || null,
+    beats: Array.isArray(ep?.beats) ? ep.beats.map((beat, beatIndex) => ({
+      ...beat,
+      beat: Number(beat?.beat ?? beatIndex + 1) || beatIndex + 1,
+      stage_id: String(beat?.stage_id || '').trim(),
+      target_seconds: Math.max(1, Number(beat?.target_seconds) || 1),
+      intensity: Math.max(1, Math.min(10, Number(beat?.intensity) || 1)),
+      value_before: String(beat?.value_before || '').trim(),
+      value_after: String(beat?.value_after || '').trim(),
+      causal_link: String(beat?.causal_link || '').trim(),
+    })) : [],
   })) : [];
-  const isComplete = (items) => items.length === n && items.every((ep) =>
-    ep.hook && ep.cliffhanger && ep.episode_desire && ep.choice_and_cost && ep.value_change && ep.beats.length >= 4
-  );
+  const requiredStages = new Set((pacingContract?.stages || []).map((stage) => stage.id));
+  const isComplete = (items) => items.length === n && items.every((ep) => {
+    const actualStages = new Set(ep.beats.map((beat) => beat.stage_id));
+    const stagesComplete = requiredStages.size === 0 || [...requiredStages].every((id) => actualStages.has(id));
+    return ep.hook && ep.cliffhanger && ep.episode_desire && ep.choice_and_cost && ep.value_change && ep.beats.length >= 6 && stagesComplete;
+  });
 
   let list = await requestBeatSheet(userPrompt, 0.72, '');
   let normalized = normalize(list);
   if (!isComplete(normalized)) {
     log?.warn?.('[剧本] 节拍表字段不完整，执行一次定向修复', { received: normalized.length, expected: n });
-    const repairPrompt = `${userPrompt}\n\n【修复要求】上一版缺集或缺少必要字段。请重新返回完整的 ${n} 集；每集 hook、cliffhanger、episode_desire、choice_and_cost、value_change 均不得为空，beats 至少4项。上一版仅供定位问题：\n${JSON.stringify(normalized)}`;
+    const repairPrompt = `${userPrompt}\n\n【修复要求】上一版缺集、缺字段或违反节奏契约。请重新返回完整的 ${n} 集；每集 hook、cliffhanger、episode_desire、choice_and_cost、value_change 均不得为空，beats 至少6项，且每个节奏阶段至少出现一次并保持顺序。上一版仅供定位问题：\n${JSON.stringify(normalized)}`;
     list = await requestBeatSheet(repairPrompt, 0.35, '修复版');
     normalized = normalize(list);
   }
@@ -257,7 +276,13 @@ async function generateStoryThreeStage(db, log, body, { onStage } = {}) {
   const cfg = require('../config').loadConfig();
   const episodeCount = Math.max(1, Math.floor(Number(body.episode_count) || 1));
   const model = body.model || undefined;
-  const wordsPerEpisode = Math.max(300, Number(body.words_per_episode) || 800);
+  const pacingContract = pacing.buildPacingContract({
+    dramatic_type: body.dramatic_type || body.type,
+    pacing_preset: body.pacing_preset,
+    target_duration: body.target_duration,
+    pacing_stages: body.pacing_stages,
+  });
+  const wordsPerEpisode = Math.max(300, Number(body.words_per_episode) || Math.round(pacingContract.target_duration * 8));
   const common = { model, cfg, episodeCount };
 
   onStage?.('bible', 15, '正在搭建故事圣经（人设 / 世界观 / 关系）...');
@@ -266,11 +291,12 @@ async function generateStoryThreeStage(db, log, body, { onStage } = {}) {
     style: body.style || body.genre || null,
     type: body.type || null,
     creativePreferences: body.creative_preferences,
+    pacingContract,
     ...common,
   });
 
   onStage?.('beats', 35, '正在排布分集节拍表（钩子 / 反转 / 卡点）...');
-  const beatSheet = await generateBeatSheet(db, log, { bible, ...common });
+  const beatSheet = await generateBeatSheet(db, log, { bible, pacingContract, ...common });
 
   onStage?.('scripts', 45, `正在逐集撰写正文（共 ${beatSheet.length} 集）...`);
   const episodes = await generateEpisodeScripts(db, log, {
@@ -280,7 +306,17 @@ async function generateStoryThreeStage(db, log, body, { onStage } = {}) {
     },
   });
 
-  return { bible, episodes };
+  const diagnosis = storyDoctor.diagnoseStory({
+    episodes,
+    dramaticType: pacingContract.dramatic_type,
+    pacingContract,
+  });
+  return {
+    bible: { ...bible, pacing_contract: pacingContract, story_diagnosis: diagnosis },
+    episodes,
+    pacing_contract: pacingContract,
+    story_diagnosis: diagnosis,
+  };
 }
 
 module.exports = {

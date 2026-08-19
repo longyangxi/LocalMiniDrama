@@ -902,8 +902,8 @@ const STORY_STYLE_LABELS = {
   zh: { modern: '现代', ancient: '古风', fantasy: '奇幻', daily: '日常' },
 };
 const STORY_TYPE_LABELS = {
-  en: { drama: 'Drama', comedy: 'Comedy', adventure: 'Adventure' },
-  zh: { drama: '剧情', comedy: '喜剧', adventure: '冒险' },
+  en: { drama: 'Drama', adventure: 'Adventure', power: 'Power fantasy', suspense: 'Suspense', emotion: 'Emotional drama', comedy: 'Comedy', custom: 'Custom' },
+  zh: { drama: '剧情', adventure: '冒险', power: '爽剧', suspense: '悬疑', emotion: '情感', comedy: '喜剧', custom: '自定义' },
 };
 
 /**

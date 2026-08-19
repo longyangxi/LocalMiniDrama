@@ -385,7 +385,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const result = sb.result ?? '';
   const emotion = sb.emotion ?? '';
   const segmentIndex = sb.segment_index != null ? Number(sb.segment_index) : 0;
-  const segmentTitle = sb.segment_title ?? null;
+  const segmentTitle = sb.segment_title ?? sb.story_stage ?? null;
   const lightingStyle = sb.lighting_style ?? null;
   const depthOfField = sb.depth_of_field ?? null;
   // 音频先行：镜头时长必须先装得下台词/旁白，再考虑模型给的值与用户设定的目标时长。
@@ -1144,13 +1144,23 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   // 图片比例 + 每镜时长：优先用传入值，再从 drama.metadata 读，最后兜底全局配置
   let dramaAspectRatio = null;
   let videoClipDuration = null;
+  let pacingContract = null;
   try {
     if (drama && drama.metadata) {
       const meta = typeof drama.metadata === 'string' ? JSON.parse(drama.metadata) : drama.metadata;
       if (meta && meta.aspect_ratio) dramaAspectRatio = meta.aspect_ratio;
       if (meta && meta.video_clip_duration) videoClipDuration = Number(meta.video_clip_duration) || null;
     }
+    if (drama?.story_bible) {
+      const bible = typeof drama.story_bible === 'string' ? JSON.parse(drama.story_bible) : drama.story_bible;
+      pacingContract = bible?.pacing_contract || null;
+    }
   } catch (_) {}
+  // 专业剧本生成产生的节奏契约优先于旧版“自动估算”。用户仍可在分镜高级设置中显式覆盖镜头数。
+  if (pacingContract?.target_duration) {
+    videoDuration = Number(pacingContract.target_duration);
+    if (!storyboardCount && pacingContract.expected_shots) storyboardCount = Number(pacingContract.expected_shots);
+  }
   const imageRatio = aspectRatio || dramaAspectRatio || cfg?.style?.default_video_ratio || '16:9';
 
   // 计算单镜建议时长（秒）：
@@ -1162,7 +1172,9 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     videoDuration && storyboardCount
       ? Math.round(Number(videoDuration) / Number(storyboardCount))
       : null;
-  if (videoClipDuration && Number(videoClipDuration) > 0) {
+  if (pacingContract?.average_shot_seconds) {
+    effectiveShotDuration = Number(pacingContract.average_shot_seconds);
+  } else if (videoClipDuration && Number(videoClipDuration) > 0) {
     effectiveShotDuration = Number(videoClipDuration);
   } else if (impliedFromTotal && impliedFromTotal > 0) {
     effectiveShotDuration = impliedFromTotal;
@@ -1227,7 +1239,7 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   // 当同时指定总时长和数量时，补充单镜 duration 说明（与项目「每段秒数」一致时勿用总÷镜压短）
   if (storyboardCount && videoDuration && effectiveShotDuration) {
     const isEn = promptI18n.isEnglish(cfg);
-    const clipFromProject = videoClipDuration && Number(videoClipDuration) > 0;
+    const clipFromProject = !pacingContract && videoClipDuration && Number(videoClipDuration) > 0;
     const implied =
       impliedFromTotal && impliedFromTotal > 0 ? impliedFromTotal : Math.round(Number(videoDuration) / Number(storyboardCount));
     if (clipFromProject) {
@@ -1278,7 +1290,7 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
       const beats = typeof episode.beat_sheet === 'string' ? JSON.parse(episode.beat_sheet) : episode.beat_sheet;
       if (beats && (beats.hook || Array.isArray(beats.beats))) {
         const beatLines = (Array.isArray(beats.beats) ? beats.beats : [])
-          .map((b) => `  ${b.beat}. [${b.type || 'beat'}] ${b.content || ''}`)
+          .map((b) => `  ${b.beat}. [${b.stage_id || b.type || 'beat'} · ${b.target_seconds || '?'}s] ${b.content || ''}`)
           .join('\n');
         storyContextBlock += isEnLang
           ? `BEAT SHEET FOR THIS EPISODE (align shot grouping to these beats; segment_title should echo them):\nHook: ${beats.hook || ''}\n${beatLines}\nCliffhanger: ${beats.cliffhanger || ''}\n\n`
@@ -1287,6 +1299,11 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
     }
   } catch (err) {
     log.warn('[分镜] 故事圣经/节拍表解析失败，按纯剧本生成', { error: err.message });
+  }
+
+  if (pacingContract?.stages?.length) {
+    const { formatPacingContractForPrompt } = require('./pacingContract');
+    storyContextBlock += `${formatPacingContractForPrompt(pacingContract, promptI18n.isEnglish(cfg))}\n\n`;
   }
 
   let userPrompt =
@@ -1298,6 +1315,14 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   }
 
   let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg);
+
+  if (pacingContract?.stages?.length) {
+    const allowedStages = pacingContract.stages.map((stage) => stage.id).join(' | ');
+    systemPrompt += `\n\n【最高优先级——节奏契约】
+每个分镜对象必须额外返回 story_stage 字段，值只能是：${allowedStages}。
+story_stage 必须按上述顺序单向推进，禁止回退；每阶段 duration 总和应贴近契约目标秒数（允许 ±15%）。
+选择与反转只能在 choice_reversal 阶段达到全片峰值；前段不得提前泄露最终反转，consequence 必须展示选择造成的后果并停在卡点。`;
+  }
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
   // 使"目标数量"优先于默认的"一动作一镜头、禁止合并"原则

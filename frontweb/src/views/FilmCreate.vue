@@ -200,33 +200,47 @@
                   placeholder="例如：一个少女在森林里遇见会说话的狐狸，一起寻找失落的宝石..."
                   class="story-textarea"
                 />
-                <div class="row gap" style="margin-top: 10px; flex-wrap: wrap;">
-                  <el-select v-model="storyStyle" placeholder="故事风格" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
+                <div class="story-essentials">
+                  <el-select v-model="storyStyle" placeholder="故事背景" style="width: 120px" @change="() => saveProjectSettings(false)">
                     <el-option label="现代" value="modern" />
                     <el-option label="古风" value="ancient" />
                     <el-option label="奇幻" value="fantasy" />
                     <el-option label="日常" value="daily" />
                   </el-select>
-                  <el-select v-model="storyType" placeholder="剧本类型" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
-                    <el-option label="剧情" value="drama" />
+                  <el-select v-model="storyType" placeholder="剧情类型" style="width: 120px" @change="onStoryTypeChange">
+                    <el-option label="爽剧" value="power" />
+                    <el-option label="悬疑" value="suspense" />
+                    <el-option label="情感" value="emotion" />
                     <el-option label="喜剧" value="comedy" />
-                    <el-option label="冒险" value="adventure" />
+                    <el-option label="自定义" value="custom" />
+                  </el-select>
+                  <el-select v-model="storyPacingPreset" placeholder="节奏" style="width: 108px" @change="() => saveProjectSettings(false)">
+                    <el-option label="紧凑" value="compact" />
+                    <el-option label="标准" value="standard" />
+                    <el-option label="舒缓" value="relaxed" />
                   </el-select>
                   <div style="display:flex;align-items:center;gap:6px;font-size:13px">
-                    <span>集数</span>
+                    <span>每集</span>
                     <el-input-number
-                      v-model="storyEpisodeCount"
-                      :min="1"
-                      :step="1"
+                      v-model="storyTargetDuration"
+                      :min="30"
+                      :max="600"
+                      :step="15"
                       :precision="0"
                       controls-position="right"
-                      style="width: 100px"
+                      style="width: 104px"
+                      @change="() => saveProjectSettings(false)"
                     />
+                    <span>秒</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;font-size:13px">
+                    <span>集数</span>
+                    <el-input-number v-model="storyEpisodeCount" :min="1" :step="1" :precision="0" controls-position="right" style="width: 88px" />
                   </div>
                   <el-button type="primary" :loading="isStoryGenRunning" @click="onGenerateStory">
                     生成剧本
                   </el-button>
-                  <el-button plain @click="showNovelImport = true">
+                  <el-button text @click="showNovelImport = true">
                     <el-icon><DocumentAdd /></el-icon>
                     导入小说
                   </el-button>
@@ -239,25 +253,15 @@
                   <div class="creative-preferences__body">
                     <div class="creative-preference-field">
                       <span class="creative-preference-label">希望观众主要感受到</span>
-                      <el-radio-group v-model="storyPrimaryEmotion" size="small" @change="() => saveProjectSettings(false)">
-                        <el-radio-button value="">不限定</el-radio-button>
-                        <el-radio-button value="爽感">爽感</el-radio-button>
-                        <el-radio-button value="心痛">心痛</el-radio-button>
-                        <el-radio-button value="甜蜜">甜蜜</el-radio-button>
-                        <el-radio-button value="悬疑">悬疑</el-radio-button>
-                        <el-radio-button value="温暖">温暖</el-radio-button>
-                        <el-radio-button value="荒诞">荒诞</el-radio-button>
-                      </el-radio-group>
+                      <el-select v-model="storyPrimaryEmotion" clearable placeholder="不限定" @change="() => saveProjectSettings(false)">
+                        <el-option v-for="item in ['爽感', '心痛', '甜蜜', '悬疑', '温暖', '荒诞']" :key="item" :label="item" :value="item" />
+                      </el-select>
                     </div>
                     <div class="creative-preference-field">
                       <span class="creative-preference-label">结局余味</span>
-                      <el-radio-group v-model="storyEndingFlavor" size="small" @change="() => saveProjectSettings(false)">
-                        <el-radio-button value="">不限定</el-radio-button>
-                        <el-radio-button value="圆满">圆满</el-radio-button>
-                        <el-radio-button value="反转">反转</el-radio-button>
-                        <el-radio-button value="遗憾">遗憾</el-radio-button>
-                        <el-radio-button value="开放">开放</el-radio-button>
-                      </el-radio-group>
+                      <el-select v-model="storyEndingFlavor" clearable placeholder="不限定" @change="() => saveProjectSettings(false)">
+                        <el-option v-for="item in ['圆满', '反转', '遗憾', '开放']" :key="item" :label="item" :value="item" />
+                      </el-select>
                     </div>
                     <div class="creative-preference-field creative-preference-field--wide">
                       <span class="creative-preference-label">不想出现</span>
@@ -269,6 +273,17 @@
                         @blur="() => saveProjectSettings(false)"
                       />
                     </div>
+                    <div class="creative-preference-field creative-preference-field--wide">
+                      <span class="creative-preference-label">阶段占比 <small>合计应为 100%，一般无需修改</small></span>
+                      <div class="story-stage-editor">
+                        <label v-for="(stage, index) in storyStageDefinitions" :key="stage[0]">
+                          <span>{{ stage[1] }}</span>
+                          <el-input-number v-model="storyPacingPercentages[index]" :min="0" :max="100" :step="1" size="small" @change="() => saveProjectSettings(false)" />
+                          <em>%</em>
+                        </label>
+                      </div>
+                      <small :class="{ 'stage-total-invalid': storyPacingTotal !== 100 }">当前合计 {{ storyPacingTotal }}%，生成时会自动归一为 100%</small>
+                    </div>
                   </div>
                 </details>
                 <details v-if="store.drama?.story_bible" class="story-soul-card">
@@ -277,6 +292,19 @@
                     <small>AI 已在后台用于保持人物与主题一致</small>
                   </summary>
                   <div class="story-soul-card__body">
+                    <div v-if="store.drama.story_bible.story_diagnosis" class="story-doctor-summary">
+                      <div>
+                        <strong>剧情医生 · {{ store.drama.story_bible.story_diagnosis.score }} 分</strong>
+                        <span>{{ store.drama.story_bible.story_diagnosis.summary }}</span>
+                      </div>
+                      <div v-if="storyDoctorQuestion" class="story-doctor-feedback">
+                        <span>{{ storyDoctorQuestion.prompt }}</span>
+                        <el-select v-model="storyDoctorAnswer" placeholder="选择你的判断" size="small">
+                          <el-option v-for="option in storyDoctorQuestion.options" :key="option.value" :label="option.label" :value="option.value" />
+                        </el-select>
+                        <el-button size="small" type="primary" :disabled="!storyDoctorAnswer" :loading="isStoryGenRunning" @click="onGenerateStory">按反馈重写</el-button>
+                      </div>
+                    </div>
                     <div v-if="store.drama.story_bible.theme_question" class="story-soul-lead">
                       {{ store.drama.story_bible.theme_question }}
                     </div>
@@ -891,6 +919,11 @@
           <span>5. 分镜生成</span>
           <span class="step-desc">根据剧本、角色、场景自动生成分镜头脚本</span>
         </h2>
+        <div class="storyboard-plan-summary">
+          将按 <strong>{{ storyTargetDuration }} 秒</strong>、{{ storyPacingPreset === 'compact' ? '紧凑' : storyPacingPreset === 'relaxed' ? '舒缓' : '标准' }}节奏，自动规划约 <strong>{{ expectedShotCount(storyTargetDuration, storyPacingPreset) }} 镜</strong>
+        </div>
+        <details class="storyboard-advanced-settings">
+          <summary>高级分镜设置</summary>
         <div class="sb-config-row">
           <label class="sb-config-item">
             <span class="sb-config-label">分镜数量</span>
@@ -955,6 +988,7 @@
             导出解说 SRT
           </el-button>
         </div>
+        </details>
         <div class="asset-actions sb-batch-actions">
           <div class="flex">
             <el-button
@@ -2919,6 +2953,7 @@ import {
 } from '@/constants/styleOptions'
 import { useNavigation } from '@/composables/filmCreate/useNavigation'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
+import { STORY_STAGE_DEFINITIONS, STORY_STAGE_PRESETS, stagePayload, expectedShotCount } from '@/constants/storyPacing'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
 import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
 import { useScenes } from '@/composables/filmCreate/useScenes'
@@ -2949,12 +2984,24 @@ watch(showAiConfigDialog, (open) => {
   if (!open) invalidateActiveVideoAiConfigCache()
 })
 const storyInput = ref('')
-const storyStyle = ref('')
-const storyType = ref('')
+const storyStyle = ref('modern')
+const storyType = ref('power')
+const storyPacingPreset = ref('standard')
+const storyTargetDuration = ref(90)
+const storyStageDefinitions = STORY_STAGE_DEFINITIONS
+const storyPacingPercentages = ref([...STORY_STAGE_PRESETS.power])
+const storyPacingTotal = computed(() => storyPacingPercentages.value.reduce((sum, value) => sum + (Number(value) || 0), 0))
+const storyPacingStages = computed(() => stagePayload('custom', storyPacingPercentages.value))
+function onStoryTypeChange(value) {
+  storyPacingPercentages.value = [...(STORY_STAGE_PRESETS[value] || STORY_STAGE_PRESETS.custom)]
+  saveProjectSettings(false)
+}
 const storyEpisodeCount = ref(1)
 const storyPrimaryEmotion = ref('')
 const storyEndingFlavor = ref('')
 const storyAvoid = ref('')
+const storyDoctorAnswer = ref('')
+const storyDoctorQuestion = computed(() => store.drama?.story_bible?.story_diagnosis?.questions?.[0] || null)
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
@@ -3646,6 +3693,7 @@ function userFilledVideoDuration() {
 /** 请求后端的视频总时长：仅未手动填时传剧本估算 */
 function getVideoDurationForApi() {
   if (userFilledVideoDuration()) return Math.round(Number(videoDuration.value))
+  if (Number(storyTargetDuration.value) >= 30) return Math.round(Number(storyTargetDuration.value))
   const len = scriptTextTrimmedForEstimate().length
   if (len < 1) return undefined
   return estimateVideoDurationSecFromCharLen(len) ?? undefined
@@ -3656,7 +3704,7 @@ function getStoryboardCountForApi() {
   if (userFilledStoryboardCount()) return Math.round(Number(storyboardCount.value))
   const sec = getVideoDurationForApi()
   if (sec == null || !Number.isFinite(sec)) return undefined
-  return shotCountEstimateFromDurationSec(sec).locked
+  return expectedShotCount(sec, storyPacingPreset.value)
 }
 
 function getFirstImageFile(dataTransfer) {
@@ -4857,8 +4905,15 @@ async function loadDrama() {
     store.setDrama(d)
     // 恢复「故事生成」框的梗概（项目 description 存的是故事梗概）
     storyInput.value = (d.description || '').toString().trim()
-    storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
-    storyType.value = d.genre || ''
+    storyStyle.value = d.metadata?.story_style || 'modern'
+    const legacyTypeMap = { drama: 'emotion', adventure: 'power' }
+    storyType.value = d.metadata?.dramatic_type || legacyTypeMap[d.genre] || d.genre || 'power'
+    storyPacingPreset.value = d.metadata?.pacing_preset || 'standard'
+    storyTargetDuration.value = Number(d.metadata?.target_duration) || 90
+    const savedStages = d.metadata?.pacing_stages
+    storyPacingPercentages.value = Array.isArray(savedStages) && savedStages.length === 6
+      ? savedStages.map((stage) => Number(stage?.percent ?? stage) || 0)
+      : [...(STORY_STAGE_PRESETS[storyType.value] || STORY_STAGE_PRESETS.custom)]
     storyPrimaryEmotion.value = d.metadata?.creative_preferences?.primary_emotion || ''
     storyEndingFlavor.value = d.metadata?.creative_preferences?.ending_flavor || ''
     storyAvoid.value = d.metadata?.creative_preferences?.avoid || ''
@@ -5273,6 +5328,10 @@ async function saveProjectSettings(includeGenerationStyle = false) {
   if (!store.dramaId) return
   const metadata = {
     story_style: storyStyle.value || undefined,
+    dramatic_type: storyType.value || 'custom',
+    pacing_preset: storyPacingPreset.value || 'standard',
+    target_duration: Number(storyTargetDuration.value) || 90,
+    pacing_stages: storyPacingStages.value,
     aspect_ratio: projectAspectRatio.value || '16:9',
     video_clip_duration: videoClipDuration.value || 5,
     video_resolution: videoResolution.value || '480p',
@@ -5285,6 +5344,9 @@ async function saveProjectSettings(includeGenerationStyle = false) {
       primary_emotion: storyPrimaryEmotion.value || '',
       ending_flavor: storyEndingFlavor.value || '',
       avoid: storyAvoid.value?.trim() || '',
+      doctor_feedback: storyDoctorAnswer.value
+        ? `${storyDoctorQuestion.value?.prompt || '剧情方向'}：${storyDoctorAnswer.value}`
+        : '',
     },
   }
   if (includeGenerationStyle) {
@@ -5306,11 +5368,17 @@ async function onGenerateStory() {
     premise: storyInput.value,
     storyStyle: storyStyle.value,
     storyType: storyType.value,
+    storyPacingPreset: storyPacingPreset.value,
+    storyTargetDuration: storyTargetDuration.value,
+    storyPacingStages: storyPacingStages.value,
     storyEpisodeCount: storyEpisodeCount.value,
     creativePreferences: {
       primary_emotion: storyPrimaryEmotion.value || '',
       ending_flavor: storyEndingFlavor.value || '',
       avoid: storyAvoid.value?.trim() || '',
+      doctor_feedback: storyDoctorAnswer.value
+        ? `${storyDoctorQuestion.value?.prompt || '剧情方向'}：${storyDoctorAnswer.value}`
+        : '',
     },
     scriptTitle: scriptTitle.value,
     generationStyle: generationStyle.value,
@@ -8560,8 +8628,11 @@ function applyRouteToStore() {
     scriptTitle.value = ''
     selectedEpisodeId.value = null
     savedCurrentEpisodeNumber.value = 1
-    storyStyle.value = ''
-    storyType.value = ''
+    storyStyle.value = 'modern'
+    storyType.value = 'power'
+    storyPacingPreset.value = 'standard'
+    storyTargetDuration.value = 90
+    storyPacingPercentages.value = [...STORY_STAGE_PRESETS.power]
     storyPrimaryEmotion.value = ''
     storyEndingFlavor.value = ''
     storyAvoid.value = ''
@@ -11224,6 +11295,28 @@ html.light .frame-layout-anchor {
 }
 
 /* 渐进式创作控制：默认折叠，保留“一句话生成”的轻量入口 */
+.story-essentials {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 10px;
+}
+.storyboard-plan-summary {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin: 2px 0 10px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: var(--text-secondary, #a8b0bf);
+  background: color-mix(in srgb, #409eff 9%, var(--bg-card, #111827));
+  font-size: 13px;
+}
+.storyboard-plan-summary strong { color: #79bbff; }
+.storyboard-advanced-settings { margin-bottom: 10px; }
+.storyboard-advanced-settings > summary { cursor: pointer; color: var(--text-secondary, #94a3b8); font-size: 12px; }
+.storyboard-advanced-settings[open] > summary { margin-bottom: 9px; }
 .creative-preferences,
 .story-soul-card {
   margin-top: 12px;
@@ -11277,8 +11370,30 @@ html.light .frame-layout-anchor {
   font-size: 12px;
   color: var(--text-secondary, #a8b0bf);
 }
+.creative-preference-label small { margin-left: 5px; opacity: .72; }
+.story-stage-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 8px 12px;
+}
+.story-stage-editor label { display: grid; grid-template-columns: 1fr 86px 14px; align-items: center; gap: 5px; font-size: 12px; }
+.story-stage-editor em { font-style: normal; color: var(--text-secondary, #94a3b8); }
+.stage-total-invalid { color: #e6a23c; }
 .story-soul-card { border-color: color-mix(in srgb, #c79a52 48%, var(--border-color, #334155)); }
 .story-soul-card__body { padding-top: 13px; }
+.story-doctor-summary {
+  display: grid;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #409eff 11%, var(--bg-card, #111827));
+  font-size: 12px;
+}
+.story-doctor-summary > div:first-child { display: flex; gap: 10px; align-items: center; }
+.story-doctor-summary strong { flex: none; color: #79bbff; }
+.story-doctor-summary span { color: var(--text-secondary, #b8c0cc); }
+.story-doctor-feedback { display: grid; grid-template-columns: minmax(180px, 1fr) 160px auto; align-items: center; gap: 8px; }
 .story-soul-lead {
   font-family: "Songti SC", "STSong", serif;
   font-size: 17px;
@@ -11328,6 +11443,9 @@ html.light .frame-layout-anchor {
 @media (max-width: 900px) {
   .creative-preferences__body,
   .story-soul-grid,
-  .story-soul-characters { grid-template-columns: 1fr; }
+  .story-soul-characters,
+  .story-stage-editor { grid-template-columns: 1fr; }
+  .story-doctor-summary > div:first-child,
+  .story-doctor-feedback { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: 6px; }
 }
 </style>

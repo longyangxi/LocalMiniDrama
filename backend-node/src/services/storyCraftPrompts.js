@@ -172,7 +172,7 @@ function getBeatSheetSystemPrompt(isEn, episodeCount) {
 ${SHORT_DRAMA_CRAFT_EN}
 
 Rules:
-- Each episode gets 5-7 beats. Beat 1 is the hook, the last beat is the cliffhanger.
+- Each episode gets 6-9 beats. Every pacing-contract stage must appear at least once, in the declared order.
 - Consecutive episodes must interlock: the cliffhanger of episode k is answered (or deepened) in the first beat of episode k+1.
 - Do not reuse the same reversal twice across the series.
 - Vary episode rhythm. A revelation is not mandatory; an earned choice, relationship shift or cost can be the turn.
@@ -193,7 +193,7 @@ Return ONLY a JSON array of ${n} objects, no markdown:
     "value_change": "the key relationship/belief/value before → after",
     "payoff_ids": ["promises planted or paid in this episode"],
     "beats": [
-      {"beat": 1, "type": "hook|setup|turn|peak|cliffhanger", "characters": ["..."], "content": "what happens, filmable"}
+      {"beat": 1, "stage_id": "one ID from the pacing contract", "target_seconds": 12, "type": "hook|setup|turn|peak|cliffhanger", "intensity": 1, "value_before": "...", "value_after": "...", "causal_link": "because the prior beat happened...", "characters": ["..."], "content": "what happens, filmable"}
     ]
   }
 ]`;
@@ -205,7 +205,7 @@ Return ONLY a JSON array of ${n} objects, no markdown:
 ${SHORT_DRAMA_CRAFT_ZH}
 
 规则：
-- 每集 5-7 个节拍。第 1 拍必须是钩子，最后 1 拍必须是卡点。
+- 每集 6-9 个节拍。节奏契约中的每个阶段至少出现一次，并严格按照契约顺序排列。
 - 相邻集必须咬合：第 k 集的卡点，要在第 k+1 集的第 1 拍被回应或加深。
 - 同一个反转不得在全剧中重复使用。
 - 全剧要有强弱呼吸；不强制每集揭露秘密，人物选择、关系越界、代价兑现也可以成为转折。
@@ -227,7 +227,7 @@ ${SHORT_DRAMA_CRAFT_ZH}
     "value_change": "最重要的关系/信念/价值从什么变成什么",
     "payoff_ids": ["本集埋下或回收的承诺标识"],
     "beats": [
-      {"beat": 1, "type": "hook|setup|turn|peak|cliffhanger", "characters": ["在场角色"], "content": "这一拍发生什么，必须可拍"}
+      {"beat": 1, "stage_id": "节奏契约中的阶段ID", "target_seconds": 12, "type": "hook|setup|turn|peak|cliffhanger", "intensity": 1, "value_before": "拍前局面", "value_after": "拍后局面", "causal_link": "因为上一拍发生了什么，所以才有这一拍", "characters": ["在场角色"], "content": "这一拍发生什么，必须可拍"}
     ]
   }
 ]`;
@@ -280,12 +280,15 @@ ${AI_PRODUCIBILITY_RULES_ZH}
 }
 
 /** 第二段的 user 侧输入 */
-function buildBeatSheetUserPrompt(isEn, bible, episodeCount) {
+function buildBeatSheetUserPrompt(isEn, bible, episodeCount, pacingContract) {
   const n = Math.max(1, Number(episodeCount) || 1);
   const bibleText = typeof bible === 'string' ? bible : JSON.stringify(bible, null, 2);
+  const pacingText = pacingContract
+    ? require('./pacingContract').formatPacingContractForPrompt(pacingContract, isEn)
+    : '';
   return isEn
-    ? `STORY BIBLE:\n${bibleText}\n\nLay out the beat sheet for all ${n} episode(s).`
-    : `【故事圣经】\n${bibleText}\n\n请为全部 ${n} 集排出节拍表。`;
+    ? `STORY BIBLE:\n${bibleText}\n\n${pacingText}\n\nLay out the beat sheet for all ${n} episode(s). The contract is binding, not a suggestion.`
+    : `【故事圣经】\n${bibleText}\n\n${pacingText}\n\n请为全部 ${n} 集排出节拍表。以上契约是硬约束，不是参考建议。`;
 }
 
 /** 第三段的 user 侧输入：压缩版圣经 + 本集节拍 + 上集结尾 */
@@ -390,10 +393,11 @@ function buildCreativePreferencesBlock(isEn, preferences) {
   const emotion = String(preferences.primary_emotion || '').trim();
   const ending = String(preferences.ending_flavor || '').trim();
   const avoid = String(preferences.avoid || '').trim();
-  if (!emotion && !ending && !avoid) return '';
+  const doctorFeedback = String(preferences.doctor_feedback || '').trim();
+  if (!emotion && !ending && !avoid && !doctorFeedback) return '';
   return isEn
-    ? ['CREATOR PREFERENCES (optional; honor without forcing):', emotion && `Primary audience emotion: ${emotion}`, ending && `Ending aftertaste: ${ending}`, avoid && `Avoid: ${avoid}`].filter(Boolean).join('\n')
-    : ['【创作偏好（可选，不要生硬套用）】', emotion && `主要情绪：${emotion}`, ending && `结局余味：${ending}`, avoid && `不想出现：${avoid}`].filter(Boolean).join('\n');
+    ? ['CREATOR PREFERENCES (optional; honor without forcing):', emotion && `Primary audience emotion: ${emotion}`, ending && `Ending aftertaste: ${ending}`, avoid && `Avoid: ${avoid}`, doctorFeedback && `Creator's answer to the story doctor: ${doctorFeedback}`].filter(Boolean).join('\n')
+    : ['【创作偏好（可选，不要生硬套用）】', emotion && `主要情绪：${emotion}`, ending && `结局余味：${ending}`, avoid && `不想出现：${avoid}`, doctorFeedback && `用户对剧情医生的反馈：${doctorFeedback}。新版本必须让这个选择真正改变人物行动、代价或反转，不得只改台词。`].filter(Boolean).join('\n');
 }
 
 function getEpisodePolishSystemPrompt(isEn) {

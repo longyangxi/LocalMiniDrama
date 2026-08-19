@@ -659,7 +659,7 @@ function formatStyle(style) {
 }
 
 function formatGenre(genre) {
-  const map = { drama: '剧情', comedy: '喜剧', adventure: '冒险', romance: '爱情', thriller: '悬疑', action: '动作', horror: '恐怖' }
+  const map = { drama: '剧情', power: '爽剧', suspense: '悬疑', emotion: '情感', custom: '自定义', comedy: '喜剧', adventure: '冒险', romance: '爱情', thriller: '悬疑', action: '动作', horror: '恐怖' }
   return map[genre] || genre
 }
 
